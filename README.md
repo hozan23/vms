@@ -80,4 +80,9 @@ machines:
 # devices=
 ```
 
+`display` and `vgadevices` values are added to QEMU arguments only if the
+`graphic` are set to `yes`. Otherwise, the script will ignore them. By default,
+the graphics are set to `yes` for the installation. You may disable it in the
+config file after the installation.
+
 These default settings can be customized by modifying config files.
