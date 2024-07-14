@@ -84,7 +84,7 @@ usage() {
     $ vms boot IMAGE_NAME ISO_PATH
       $ vms boot arch /path/to/arch.iso
     $ vms create IMAGE_NAME SIZE_OF_IMAGE
-      $ vms create arch 50g 
+      $ vms create arch 50G
     $ vms list\n" "$vms_path"
     exit 1
 }
@@ -212,6 +212,7 @@ case "$1" in
     save_config "$vms_path/$2.conf"
 
     printf "Created %s Successfully!\n" "$2"
+    printf "Please modify the config file: %s \n" "$vms_path/$2.conf"
     ;;
 
 "list")
