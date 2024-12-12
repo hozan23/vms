@@ -11,7 +11,7 @@ that into the configuration.
 
 ## Prerequisites
 
-Ensure you have the following dependencies installed:
+Ensure you have the following commands installed:
 
 - `qemu-img`
 - `qemu-system-x86_64`
@@ -27,7 +27,7 @@ $ make PREFIX=/home/USER/.local install
 ## Usage
 
 The first time you run `vms` command, it will create a `vms` directory under
-your home directory to store the images, configs, and ISOs for the VMs.
+your home directory to store the images, and configs, for the VMs.
 
 First, download the ISO image, for example, [arch linux](https://archlinux.org/download/). 
 
@@ -83,7 +83,7 @@ machines:
 
 `display` and `vgadevices` values are added to QEMU arguments only if the
 `graphic` are set to `yes`. Otherwise, the script will ignore them. By default,
-the graphics are set to `yes` for the installation. You may disable it in the
-config file after the installation.
+the graphics are set to `yes` for the installation of the operating system. You
+may disable it in the config file after the installation.
 
 These default settings can be customized by modifying config files.
