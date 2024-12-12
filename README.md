@@ -68,6 +68,7 @@ machines:
 ### Default vm configuration
 # ram=12G
 # cpu=host
+# smp=$(nproc)
 # graphic=yes
 # audio=no
 #

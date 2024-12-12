@@ -13,6 +13,7 @@ config=(
     [boot]="menu=on"
     [ram]="12G"
     [cpu]="host"
+    [smp]=$(nproc)
     [display]="sdl,grab-mod=rctrl"
     [ports]="10022:22 8080:80"
     [audiodevices]="intel-hda hda-duplex"
@@ -101,6 +102,7 @@ run_qemu() {
         -boot "${config[boot]}"
         -m "${config[ram]}"
         -cpu "${config[cpu]}"
+        -smp "${config[smp]}" 
     )
 
     if [ -n "${config[net]}" ]; then
