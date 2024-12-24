@@ -27,7 +27,7 @@ $ make PREFIX=/home/USER/.local install
 ## Usage
 
 The first time you run `vms` command, it will create a `vms` directory under
-your home directory to store the images, and configs, for the VMs.
+your home directory to store the images, and configs for the VMs.
 
 First, download the ISO image, for example, [arch linux](https://archlinux.org/download/). 
 
@@ -66,19 +66,21 @@ machines:
 
 ```sh
 ### Default vm configuration
-# ram=12G
-# cpu=host
-# smp=$(nproc)
-# graphic=yes
-# audio=no
-#
-# Forward host port 10022 to guest port 22 and host port 8080 to guest port 80
-# ports=10022:22 8080:80
-#
-# display=sdl,grab-mod=rctrl
-# vgadevices=VGA,vgamem_mb=64
-# audiodevices=intel-hda hda-duplex
-# devices=
+smp=22
+audio=no
+devices=
+ram=12G
+cpu=host
+bios_path=/usr/share/qemu/bios.bin
+audiodevices=intel-hda hda-duplex
+graphic=yes
+ports=10022:22 8080:80
+net=nic
+boot=menu=on
+nocow=off
+image_format=raw
+display=sdl,grab-mod=rctrl
+vgadevices=VGA,vgamem_mb=64
 ```
 
 `display` and `vgadevices` values are added to QEMU arguments only if the
