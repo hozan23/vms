@@ -4,7 +4,7 @@ VMS_BASH_FILE = $(VMS_CMD).sh
 
 .PHONY: all install uninstall
 
-all: install
+all: 
 
 install: $(VMS_BASH_FILE)
 	mkdir -p $(DESTDIR)$(PREFIX)/bin

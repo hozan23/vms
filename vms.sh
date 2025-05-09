@@ -4,7 +4,6 @@ set -e
 
 vms_path=$(realpath ~/vms)
 config_path="${vms_path}/config"
-version="0.1.0"
 
 # Default configuration
 declare -A config
@@ -13,8 +12,6 @@ config=()
 # Default vm configuration
 declare -A vm_config
 vm_config=(
-    [graphic]="yes"
-    [audio]="no"
     [boot]="menu=on"
     [ram]="12G"
     [cpu]="host"
@@ -22,15 +19,37 @@ vm_config=(
     [image_format]="raw"
     [smp]=$(nproc)
     [display]="sdl,grab-mod=rctrl"
+    [monitor]="stdio"
+    [serial]="none"
     [ports]="10022:22 8080:80"
-    [audiodevices]="intel-hda hda-duplex"
-    [vgadevices]="VGA,vgamem_mb=64"
-    [devices]=""
+    [daemonize]="off"
+    [devices]="intel-hda hda-duplex VGA,vgamem_mb=64"
     [bios_path]="/usr/share/qemu/bios.bin"
     [net]="nic"
 )
 
-# Load config from a file
+#
+# BEGIN helper functions
+#
+
+initialize() {
+    if [ ! -d "$vms_path" ]; then
+        printf "Creating vms directory in %s\n" "$vms_path"
+        mkdir -p "$vms_path"
+    fi
+
+    if [ ! -f "$config_path" ]; then
+        printf "Creating config file %s\n" "$config_path"
+        save_config config "$config_path" 
+    fi
+
+    for cmd in qemu-img qemu-system-x86_64; do
+        if ! command -v "$cmd" &>/dev/null; then
+            die "error: $cmd is not installed"
+        fi
+    done
+}
+
 load_config() {
     local -n conf=$1
     local file="$2" value
@@ -47,7 +66,6 @@ load_config() {
     done <"$file"
 }
 
-# Save config to a file
 save_config() {
     local -n conf=$1
     local file="$2" key
@@ -57,7 +75,6 @@ save_config() {
     done
 }
 
-# Print the given config 
 print_config() {
     local -n conf=$1
     for k in "${!conf[@]}"; do
@@ -65,33 +82,32 @@ print_config() {
     done
 }
 
-# Print error message to stderr
-printerr() { printf "%s\n" "$*" >&2; }
+die() {
+    echo "$@" >&2
+    exit 1
+}
 
-# Check if a file exists
 file_exists() {
     if [ ! -f "$1" ]; then
-        printerr "error: file $1 not exist"
-        exit 1
+        die "error: file $1 not exist"
     fi
 }
 
-# Check if the number of parameters is correct
 check_params() {
     if [ "$1" -lt "$2" ]; then
-        printerr "error: wrong parameters"
-        exit 1
+        die "error: wrong parameters"
     fi
 }
-# Load vm config 
+
 load_vm_config() {
-    vm_conf_path="$vms_path/$1.conf"
+    vm_conf_path="$vms_path/$1/config"
     file_exists "$vm_conf_path"
     load_config vm_config "$vm_conf_path"
 }
 
-# Run QEMU 
 run_qemu() {
+    local vm_path=$1
+    shift
     # Define the QEMU arguments
     local qemu_args=(
         --enable-kvm
@@ -100,6 +116,8 @@ run_qemu() {
         -m "${vm_config[ram]}"
         -cpu "${vm_config[cpu]}"
         -smp "${vm_config[smp]}" 
+        -pidfile "$vm_path/pid"
+        -monitor "${vm_config[monitor]}"
     )
 
     if [ -n "${vm_config[net]}" ]; then
@@ -108,8 +126,7 @@ run_qemu() {
         for ports in ${vm_config[ports]}; do
             IFS=':' read -ra p <<<"$ports"
             if [ ${#p[@]} != 2 ]; then
-                printerr "error: wrong port: ${p[*]}"
-                exit 1
+                die "error: wrong port: ${p[*]}"
             fi
             qemu_net_arg+=",hostfwd=tcp::${p[0]}-:${p[1]}"
         done
@@ -119,29 +136,19 @@ run_qemu() {
 
     local device
 
-    if [ "${vm_config[graphic]}" = "yes" ]; then
-        qemu_args+=(-display "${vm_config[display]}")
-        for device in ${vm_config[vgadevices]}; do
-            qemu_args+=(-device "${device}")
-        done
+    qemu_args+=(-display "${vm_config[display]}")
 
-        if [ "${vm_config[audio]}" = "yes" ]; then
-            for device in ${vm_config[audiodevices]}; do
-                qemu_args+=(-device "${device}")
-            done
-        fi
-    else
-        qemu_args+=(-nographic)
+    if [ "${vm_config[daemonize]}" = "on" ]; then
+        qemu_args+=(-daemonize)
     fi
 
     for device in ${vm_config[devices]}; do
         qemu_args+=(-device "${device}")
     done
 
-    qemu-system-x86_64 "${qemu_args[@]}" "${@:1}"
+    qemu-system-x86_64 "${qemu_args[@]}" "${@:1}" 
 }
 
-# Create a new vm
 create_new_vm() {
     local qemu_img_args=()
 
@@ -162,180 +169,199 @@ create_new_vm() {
         unset 'qemu_img_args[-1]'
     fi
 
-    qemu-img create "$vms_path/$1.img" "$2" "${qemu_img_args[@]}"
-}
-
-# Print help information
-usage() {
-    printf "Usage: vms COMMAND [ARGS...]\n\n"
-    printf "vms - A simple virtual machine management tool\n\n"
-    printf "vms path: %s\n" "$vms_path"
-    printf "Commands:\n"
-    printf "  run VM_NAME\n"
-    printf "    Start an existing virtual machine by its name.\n"
-    printf "    Example:\n"
-    printf "      $ vms run arch\n"
-    printf "\n"
-    printf "  boot VM_NAME ISO_PATH\n"
-    printf "    Boot a virtual machine from a specific ISO file.\n"
-    printf "    Useful for installation or live sessions.\n"
-    printf "    - VM_NAME: Name of the virtual machine to boot.\n"
-    printf "    - ISO_PATH: Path to the ISO file to boot from.\n"
-    printf "    Example:\n"
-    printf "      $ vms boot arch /path/to/arch.iso\n"
-    printf "\n"
-    printf "  create VM_NAME SIZE_OF_IMAGE\n"
-    printf "    Create a new virtual machine image.\n"
-    printf "    - VM_NAME: Name of the new virtual machine.\n"
-    printf "    - SIZE_OF_IMAGE: Size of the virtual disk image\n"
-    printf "        (e.g., 50G for 50 gigabytes).\n"
-    printf "    Example:\n"
-    printf "      $ vms create arch 50G\n"
-    printf "\n"
-    printf "  config VM_NAME\n"
-    printf "    Print the configuration file for a virtual machine.\n"
-    printf "    - VM_NAME: Name of the virtual machine.\n"
-    printf "    Example:\n"
-    printf "      $ vms config arch\n"
-    printf "\n"
-    printf "    Additional Usages for config:\n"
-    printf "      config default\n"
-    printf "        Print the default configuration used for creating new\n"
-    printf "        virtual machines.\n"
-    printf "        Example:\n"
-    printf "          $ vms config default\n"
-    printf "      config\n"
-    printf "        Print the general configuration for the vms.\n"
-    printf "\n"
-    printf "  list\n"
-    printf "    List all available virtual machines along with their current\n" 
-    printf "    status (e.g., running, stopped).\n"
-    printf "    Example:\n"
-    printf "      $ vms list\n"
-    printf "\n"
-    printf "Options:\n"
-    printf "  -h, --help\n"
-    printf "    Show this help message and exit.\n"
-    printf "Notes:\n"
-    printf "  For further documentation, check out: https://github.com/hozan23/vms\n"
-    exit 1
+    qemu-img create "$vms_path/$1/$1.img" "$2" "${qemu_img_args[@]}"
 }
 
 
-# Create the vms directory if it doesn't exists
-if [ ! -d "$vms_path" ]; then
-    printf "Creating vms directory in %s\n" "$vms_path"
-    mkdir -p "$vms_path"
-fi
 #
-# Create the config file if it doesn't exists
-if [ ! -f "$config_path" ]; then
-    printf "Creating config file %s\n" "$config_path"
-    save_config config "$config_path" 
-fi
+# END helper functions
+#
 
+# 
+# BEGIN command functions
+#
 
-# Print usage information if no arguments are provided
-if [ -z "$1" ]; then
-    usage
-fi
+cmd_run() {
+    check_params $# 1
 
-# Ensure required commands are available
-for cmd in qemu-img qemu-system-x86_64; do
-    if ! command -v "$cmd" &>/dev/null; then
-        printerr "error: $cmd is not installed"
-        exit 1
-    fi
-done
-
-case "$1" in
-"run")
-    check_params $# 2
-
-    img_path="$vms_path/$2.img"
+    local vm_path="$vms_path/$1"
+    local img_path="$vm_path/$1.img"
     file_exists "$img_path"
 
-    load_vm_config $2 
+    load_vm_config $1
 
-    img_args=(
+    local img_args=(
         -drive "file=$img_path,format=${vm_config[image_format]}"
     )
 
-    run_qemu "${img_args[@]}"
-    ;;
+    run_qemu $vm_path "${img_args[@]}"
+}
 
-"boot")
-    check_params $# 3
+cmd_stop() {
+    check_params $# 1
 
-    img_path="$vms_path/$2.img"
-    iso_path=$(realpath "$3")
+    local pid_path="$vms_path/$1/pid"
+    if [ -f $pid_path ]; then
+        kill "$(cat $pid_path)"
+    else
+        die "$1 is not running"
+    fi
+}
+
+
+cmd_boot() {
+    check_params $# 2
+
+    local vm_path="$vms_path/$1"
+    local img_path="$vm_path/$1.img"
+    local iso_path=$(realpath "$2")
 
     file_exists "$img_path"
     file_exists "$iso_path"
 
-    load_vm_config $2 
+    load_vm_config $1
 
-    img_args=(
+    local img_args=(
         -drive "file=$img_path,format=${vm_config[image_format]}"
         -cdrom "$iso_path"
     )
 
-    run_qemu "${img_args[@]}"
-    ;;
+    run_qemu $vm_path "${img_args[@]}"
+}
 
-"create")
-    check_params $# 3
+cmd_create() {
+    check_params $# 2
 
-    vm_conf_path="$vms_path/$2.conf"
+    local vm_path="$vms_path/$1"
+    mkdir -p $vm_path 
+
+    local vm_conf_path="$vm_path/config"
     if [ -f "$vm_conf_path" ]; then
         load_config vm_config "$vm_conf_path"
     else 
         save_config vm_config "$vm_conf_path"
     fi
 
-    create_new_vm "$2" "$3"
+    create_new_vm "$1" "$2"
 
-    printf "Created %s Successfully!\n" "$2"
-    printf "Please modify the config file: %s \n" "$vms_path/$2.conf"
-    ;;
+    printf "Created %s Successfully!\n" "$1"
+    printf "Please modify the config file: %s \n" "$vm_path/config"
 
-"config")
-    if [ "$#" -eq 1 ]; then
+}
+
+cmd_config() {
+    if [ "$#" -eq 0 ]; then
         load_config config "$config_path"
         print_config config 
-    elif [ "$#" -eq 2 ]; then
-        if [ "$2" = "default" ]; then 
+    elif [ "$#" -eq 1 ]; then
+        if [ "$1" = "default" ]; then 
             print_config vm_config 
         else
-            load_vm_config $2 
+            load_vm_config $1 
             print_config vm_config 
         fi
     else
-        printerr "error: wrong parameters"
-        exit 1
+        die "error: wrong parameters"
     fi
-    ;;
+}
 
-"list")
-    for img in "$vms_path"/*.img; do
-        printf " - %s " "$(basename $img .img)"
-        if pgrep -f "$img" > /dev/null; then
-            printf "(running)\n"
-        else
-            printf "(stopped)\n"
+cmd_list() {
+    for img in "$vms_path"/*/*.img; do
+        local vm_path=$(dirname $img)
+        local vm_name=$(basename $img .img)
+        local vm_status=""
+        if [ -f "$vm_path/pid" ] && [ -d "/proc/$(cat "$vm_path/pid")" ]; then
+            local vm_status="(running)"
         fi
+        printf " - %s %s\n" "$vm_name" "$vm_status"
     done
-    ;;
+}
 
-"-h" | "--help")
-    usage
-    ;;
+# Print help information
+cmd_usage() {
+    cmd_version
+    echo
+	cat <<-_EOF
+	Usage: vms COMMAND [ARGS...]
+	vms path:  $vms_path
+	Commands:
+	  run VM_NAME
+	    Start an existing virtual machine.
+	    Example:
+	      $ vms run arch
+	  stop VM_NAME
+	    Stop a running virtual machine.
+	    Example:
+	      $ vms stop arch
+	  boot VM_NAME ISO_PATH
+	    Boot a virtual machine from a specific ISO file.
+	    - VM_NAME: Name of the virtual machine to boot.
+	    - ISO_PATH: Path to the ISO file to boot from.
+	    Example:
+	      $ vms boot arch /path/to/arch.iso
+	  create VM_NAME SIZE_OF_IMAGE
+	    Create a new virtual machine image.
+	    - VM_NAME: Name of the new virtual machine.
+	    - SIZE_OF_IMAGE: Size of the virtual disk image
+	        (e.g., 50G for 50 gigabytes).
+	    Example:
+	      $ vms create arch 50G
+	  config VM_NAME
+	    Print the configuration file for a virtual machine.
+	    - VM_NAME: Name of the virtual machine.
+	    Example:
+	      $ vms config arch
+	    Additional Usages for config:
+	      config default
+	        Print the default configuration used for creating new
+	        virtual machines.
+	        Example:
+	          $ vms config default
+	      config
+	        Print the global configuration for the vms.
+	  list
+	    List all available virtual machines along with their current 
+	    status (e.g., running, stopped).
+	Options:
+	  -h, --help
+	    Show this help message and exit.
+	_EOF
+}
 
-"--version")
-    printf "%s\n" $version
-    ;;
+cmd_version() {
+	cat <<-_EOF
+	===========================================
+	vms: a simple script to manage headless VMs
+	
+	                 v0.2.0
+	
+	                 hozan23
+	          hozan23@karyontech.net
+	      https://github.com/hozan23/vms
+	===========================================
+	_EOF
+}
 
-*)
-    printerr "error: command $1 not found"
-    ;;
+# 
+# END command functions
+#
+if [ -z "$1" ]; then
+    cmd_usage
+fi
+
+case "$1" in
+    run|boot|create|list|config|monitor) initialize ;;
 esac
+
+case "$1" in
+run) shift;                     cmd_run "$@" ;; 
+stop) shift;                    cmd_stop "$@" ;; 
+boot) shift;                    cmd_boot "$@" ;; 
+create) shift;                  cmd_create "$@" ;; 
+list) shift;                    cmd_list "$@" ;; 
+config) shift;                  cmd_config "$@" ;; 
+help|-h|--help) shift;          cmd_usage "$@" ;;
+version|-v|--version) shift;    cmd_version "$@" ;;
+*)                              die "error: command $1 not found" ;;
+esac
+exit 0
