@@ -15,15 +15,14 @@ vm_config=(
     [boot]="menu=on"
     [ram]="12G"
     [cpu]="host"
-    [nocow]="off"
     [image_format]="raw"
     [smp]=$(nproc)
-    [display]="sdl,grab-mod=rctrl"
+    [display]="sdl"
     [monitor]="stdio"
     [serial]="none"
     [ports]="10022:22 8080:80"
     [daemonize]="off"
-    [devices]="intel-hda hda-duplex VGA,vgamem_mb=64"
+    [devices]=
     [bios_path]="/usr/share/qemu/bios.bin"
     [net]="nic"
 )
@@ -71,7 +70,7 @@ save_config() {
     local file="$2" key
     printf "### Default configuration\n" >"$file"
     for key in "${!conf[@]}"; do
-        printf "# %s=%s\n" "$key" "${conf[$key]}" >>"$file"
+        printf "%s=%s\n" "$key" "${conf[$key]}" >>"$file"
     done
 }
 
@@ -150,26 +149,40 @@ run_qemu() {
 }
 
 create_new_vm() {
+    local vm_name="$1"
+    local image_size="$2"
+    shift 2
+
     local qemu_img_args=()
+    local format_set=0
 
-    qemu_img_args+=(-f)
-    if [ -z "${vm_config[image_format]}" ]; then 
-        qemu_img_args+=(raw)
-    else
-        qemu_img_args+=("${vm_config[image_format]}")
-    fi
+    while [[ $# -gt 0 ]]; do
+        case "$1" in
+            -f)
+                if [[ -n "$2" ]]; then
+                    qemu_img_args+=(-f "$2")
+                    vm_config[image_format]=$2
+                    format_set=1
+                    shift 2
+                else
+                    die "error: -f requires an argument"
+                fi
+                ;;
+            -o)
+                if [[ -n "$2" ]]; then
+                    qemu_img_args+=(-o "$2")
+                    shift 2
+                else
+                    die "error: -o requires an argument"
+                fi
+                ;;
+            *)
+                die "error: unknown option '$1'"
+                ;;
+        esac
+    done
 
-    qemu_img_args+=(-o)
-
-    if [ "${vm_config[nocow]}" = "on" ]; then 
-        qemu_img_args+=(nocow=on)
-    fi
-
-    if [ "${qemu_img_args[-1]}" = "-o" ]; then
-        unset 'qemu_img_args[-1]'
-    fi
-
-    qemu-img create "$vms_path/$1/$1.img" "$2" "${qemu_img_args[@]}"
+    qemu-img create "${qemu_img_args[@]}" "$vms_path/$vm_name/$vm_name.img" "$image_size" 
 }
 
 
@@ -184,11 +197,13 @@ create_new_vm() {
 cmd_start() {
     check_params $# 1
 
-    local vm_path="$vms_path/$1"
-    local img_path="$vm_path/$1.img"
+    local vm_name=$1
+    local vm_path="$vms_path/$vm_name"
+    local img_path="$vm_path/$vm_name.img"
+
     file_exists "$img_path"
 
-    load_vm_config $1
+    load_vm_config $vm_name
 
     local img_args=(
         -drive "file=$img_path,format=${vm_config[image_format]}"
@@ -200,11 +215,13 @@ cmd_start() {
 cmd_stop() {
     check_params $# 1
 
-    local pid_path="$vms_path/$1/pid"
+    local vm_name=$1
+    local pid_path="$vms_path/$vm_name/pid"
+
     if [ -f $pid_path ]; then
         kill "$(cat $pid_path)"
     else
-        die "$1 is not running"
+        die "$vm_name is not running"
     fi
 }
 
@@ -212,14 +229,17 @@ cmd_stop() {
 cmd_boot() {
     check_params $# 2
 
-    local vm_path="$vms_path/$1"
-    local img_path="$vm_path/$1.img"
+
+
+    local vm_name=$1
     local iso_path=$(realpath "$2")
+    local vm_path="$vms_path/$vm_name"
+    local img_path="$vm_path/$vm_name.img"
 
     file_exists "$img_path"
     file_exists "$iso_path"
 
-    load_vm_config $1
+    load_vm_config $vm_name
 
     local img_args=(
         -drive "file=$img_path,format=${vm_config[image_format]}"
@@ -231,20 +251,17 @@ cmd_boot() {
 
 cmd_create() {
     check_params $# 2
+    local vm_name=$1
+    local vm_path="$vms_path/$vm_name"
+    local vm_conf_path="$vm_path/config"
 
-    local vm_path="$vms_path/$1"
     mkdir -p $vm_path 
 
-    local vm_conf_path="$vm_path/config"
-    if [ -f "$vm_conf_path" ]; then
-        load_config vm_config "$vm_conf_path"
-    else 
-        save_config vm_config "$vm_conf_path"
-    fi
+    create_new_vm "$@"
 
-    create_new_vm "$1" "$2"
+    save_config vm_config "$vm_conf_path"
 
-    printf "Created %s Successfully!\n" "$1"
+    printf "Created %s Successfully!\n" "$vm_name"
     printf "Please modify the config file: %s \n" "$vm_path/config"
 
 }
@@ -278,7 +295,6 @@ cmd_list() {
 }
 
 cmd_usage() {
-    echo
 	cat <<-_EOF
 	Usage: vms COMMAND [ARGS...]
 	vms path:  $vms_path
@@ -291,17 +307,14 @@ cmd_usage() {
 	    Boot a virtual machine from a specific ISO file.
 	    - ISO_PATH: Path to the ISO file to boot from.
 	  vms create VM_NAME SIZE_OF_IMAGE
-	    Create a new virtual machine image.
-	    - SIZE_OF_IMAGE: Size of the virtual disk image
-	        (e.g., 50G for 50 gigabytes).
+	    Create a new virtual machine with SIZE (e.g., 50G).
+	    Optional flags -f and -o will be passed directly to 'qemu-img create'
+	    to specify image format and additional options.
 	  vms config VM_NAME
 	    Print the configuration file for a virtual machine.
 	    Additional Usages:
-	      config default
-	        Print the default configuration used for creating new
-	        virtual machines.
-	      config
-	        Print the global configuration for the vms.
+	      vms config default        Show the default config used for VMs. 
+	      vms config                Show the global vms config
 	  vms list
 	    List all available virtual machines along with their current 
 	    status (e.g., running, stopped).

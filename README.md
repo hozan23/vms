@@ -78,7 +78,6 @@ bios_path=/usr/share/qemu/bios.bin
 ports=10022:22 8080:80
 net=nic
 boot=menu=on
-nocow=off
 serial=none
 monitor=stdio 
 daemonize=off
