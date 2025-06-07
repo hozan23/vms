@@ -277,51 +277,36 @@ cmd_list() {
     done
 }
 
-# Print help information
 cmd_usage() {
-    cmd_version
     echo
 	cat <<-_EOF
 	Usage: vms COMMAND [ARGS...]
 	vms path:  $vms_path
 	Commands:
-	  start VM_NAME
+	  vms start VM_NAME
 	    Start an existing virtual machine.
-	    Example:
-	      $ vms start arch
-	  stop VM_NAME
+	  vms stop VM_NAME
 	    Stop a running virtual machine.
-	    Example:
-	      $ vms stop arch
-	  boot VM_NAME ISO_PATH
+	  vms boot VM_NAME ISO_PATH
 	    Boot a virtual machine from a specific ISO file.
-	    - VM_NAME: Name of the virtual machine to boot.
 	    - ISO_PATH: Path to the ISO file to boot from.
-	    Example:
-	      $ vms boot arch /path/to/arch.iso
-	  create VM_NAME SIZE_OF_IMAGE
+	  vms create VM_NAME SIZE_OF_IMAGE
 	    Create a new virtual machine image.
-	    - VM_NAME: Name of the new virtual machine.
 	    - SIZE_OF_IMAGE: Size of the virtual disk image
 	        (e.g., 50G for 50 gigabytes).
-	    Example:
-	      $ vms create arch 50G
-	  config VM_NAME
+	  vms config VM_NAME
 	    Print the configuration file for a virtual machine.
-	    - VM_NAME: Name of the virtual machine.
-	    Example:
-	      $ vms config arch
-	    Additional Usages for config:
+	    Additional Usages:
 	      config default
 	        Print the default configuration used for creating new
 	        virtual machines.
-	        Example:
-	          $ vms config default
 	      config
 	        Print the global configuration for the vms.
-	  list
+	  vms list
 	    List all available virtual machines along with their current 
 	    status (e.g., running, stopped).
+	  vms version 
+	    Show version information.
 	Options:
 	  -h, --help
 	    Show this help message and exit.
