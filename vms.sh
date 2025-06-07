@@ -181,7 +181,7 @@ create_new_vm() {
 # BEGIN command functions
 #
 
-cmd_run() {
+cmd_start() {
     check_params $# 1
 
     local vm_path="$vms_path/$1"
@@ -271,7 +271,7 @@ cmd_list() {
         local vm_name=$(basename $img .img)
         local vm_status=""
         if [ -f "$vm_path/pid" ] && [ -d "/proc/$(cat "$vm_path/pid")" ]; then
-            local vm_status="(running)"
+            local vm_status="(running PID: $(cat "$vm_path/pid"))"
         fi
         printf " - %s %s\n" "$vm_name" "$vm_status"
     done
@@ -285,10 +285,10 @@ cmd_usage() {
 	Usage: vms COMMAND [ARGS...]
 	vms path:  $vms_path
 	Commands:
-	  run VM_NAME
+	  start VM_NAME
 	    Start an existing virtual machine.
 	    Example:
-	      $ vms run arch
+	      $ vms start arch
 	  stop VM_NAME
 	    Stop a running virtual machine.
 	    Example:
@@ -350,11 +350,11 @@ if [ -z "$1" ]; then
 fi
 
 case "$1" in
-    run|boot|create|list|config|monitor) initialize ;;
+    start|boot|create|list|config|monitor) initialize ;;
 esac
 
 case "$1" in
-run) shift;                     cmd_run "$@" ;; 
+start) shift;                   cmd_start "$@" ;; 
 stop) shift;                    cmd_stop "$@" ;; 
 boot) shift;                    cmd_boot "$@" ;; 
 create) shift;                  cmd_create "$@" ;; 
