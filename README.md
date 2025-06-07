@@ -35,21 +35,21 @@ with the specified size and generate a config file.
 
 
 ```sh
-$ vms create arch 50G 
+$ vms create arch 50G -f qcow2 -o nocow=on 
 ```
 
 Read/Modify the config file in: `/home/USER/vms/arch/config`
 
-Then you can boot from the ISO:
+Then you can boot from the ISO file:
 
 ```sh
 $ vms boot arch /home/USER/download/arch.iso
 ```
 
-After installing, you can run this command whenever you want to run the VM:
+After installing, you can run this command whenever you want to start the VM:
 
 ```sh
-$ vms run arch 
+$ vms start arch 
 ```
 
 To stop the VM:
