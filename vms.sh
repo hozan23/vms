@@ -182,7 +182,7 @@ create_new_vm() {
         esac
     done
 
-    qemu-img create "${qemu_img_args[@]}" "$vms_path/$vm_name/$vm_name.img" "$image_size" 
+    qemu-img create "${qemu_img_args[@]}" "$vms_path/$vm_name/image.img" "$image_size" 
 }
 
 
@@ -199,7 +199,7 @@ cmd_start() {
 
     local vm_name=$1
     local vm_path="$vms_path/$vm_name"
-    local img_path="$vm_path/$vm_name.img"
+    local img_path="$vm_path/image.img"
 
     file_exists "$img_path"
 
@@ -234,7 +234,7 @@ cmd_boot() {
     local vm_name=$1
     local iso_path=$(realpath "$2")
     local vm_path="$vms_path/$vm_name"
-    local img_path="$vm_path/$vm_name.img"
+    local img_path="$vm_path/image.img"
 
     file_exists "$img_path"
     file_exists "$iso_path"
@@ -283,9 +283,9 @@ cmd_config() {
 }
 
 cmd_list() {
-    for img in "$vms_path"/*/*.img; do
+    for img in "$vms_path"/*/image.img; do
         local vm_path=$(dirname $img)
-        local vm_name=$(basename $img .img)
+        local vm_name=$(basename $vm_path)
         local vm_status=""
         if [ -f "$vm_path/pid" ] && [ -d "/proc/$(cat "$vm_path/pid")" ]; then
             local vm_status="(running PID: $(cat "$vm_path/pid"))"
