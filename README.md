@@ -70,19 +70,22 @@ By default, the script applies the following configurations to each new VM.
 
 ```sh
 ### Default vm configuration
-cpu=host
 smp=22
+devices=
 ram=12G
 image_format=raw
-bios_path=/usr/share/qemu/bios.bin
-ports=10022:22 8080:80
-net=nic
-boot=menu=on
-serial=none
-monitor=stdio 
+nic=user
 daemonize=off
-display=sdl,grab-mod=rctrl
-devices=intel-hda hda-duplex VGA,vgamem_mb=64
+cpu=host
+ports=10022:22 8080:80
+machine=
+serial=none
+bios=/usr/share/qemu/bios.bin
+boot=menu=on
+audiodev=
+monitor=stdio
+display=sdl
+accel=kvm
 
 ```
 
