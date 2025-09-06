@@ -6,12 +6,11 @@ vms_path=$(realpath ~/vms)
 config_path="${vms_path}/config"
 
 # Default configuration
-declare -A config
-config=()
+declare -A config=()
 
 # Default vm configuration
-declare -A vm_config
-vm_config=(
+declare -A vm_config=(
+    [accel]="kvm"
     [boot]="menu=on"
     [ram]="12G"
     [cpu]="host"
@@ -23,8 +22,23 @@ vm_config=(
     [ports]="10022:22 8080:80"
     [daemonize]="off"
     [devices]=
-    [bios_path]="/usr/share/qemu/bios.bin"
-    [net]="nic"
+    [bios]="/usr/share/qemu/bios.bin"
+    [nic]="user"
+    [machine]=""
+    [audiodev]=""
+)
+
+declare -A qemu_flags=(
+    [boot]=-boot
+    [ram]=-m
+    [cpu]=-cpu
+    [smp]=-smp
+    [monitor]=-monitor
+    [accel]=-accel
+    [bios]=-bios
+    [machine]=-machine
+    [audiodev]=-audiodev
+    [display]=-display
 )
 
 #
@@ -109,19 +123,23 @@ run_qemu() {
     shift
     # Define the QEMU arguments
     local qemu_args=(
-        --enable-kvm
-        -bios "${vm_config[bios_path]}"
-        -boot "${vm_config[boot]}"
-        -m "${vm_config[ram]}"
-        -cpu "${vm_config[cpu]}"
-        -smp "${vm_config[smp]}" 
         -pidfile "$vm_path/pid"
-        -monitor "${vm_config[monitor]}"
     )
 
-    if [ -n "${vm_config[net]}" ]; then
-        qemu_args+=(-net "${vm_config[net]}")
-        local qemu_net_arg="user" ports
+    local key
+    for key in "${!qemu_flags[@]}"; do
+        if [ -n "${vm_config[$key]}" ]; then
+            qemu_args+=("${qemu_flags[$key]}" "${vm_config[$key]}")
+        fi
+    done
+
+    if [ "${vm_config[daemonize]}" = "on" ]; then
+        qemu_args+=(-daemonize)
+    fi
+
+    if [ -n "${vm_config[nic]}" ]; then
+        local qemu_net_arg="${vm_config[nic]}"
+        local ports
         for ports in ${vm_config[ports]}; do
             IFS=':' read -ra p <<<"$ports"
             if [ ${#p[@]} != 2 ]; then
@@ -130,17 +148,10 @@ run_qemu() {
             qemu_net_arg+=",hostfwd=tcp::${p[0]}-:${p[1]}"
         done
 
-        qemu_args+=(-net "$qemu_net_arg")
+        qemu_args+=(-nic "$qemu_net_arg")
     fi
 
     local device
-
-    qemu_args+=(-display "${vm_config[display]}")
-
-    if [ "${vm_config[daemonize]}" = "on" ]; then
-        qemu_args+=(-daemonize)
-    fi
-
     for device in ${vm_config[devices]}; do
         qemu_args+=(-device "${device}")
     done
@@ -430,7 +441,7 @@ stop) shift;                    cmd_stop "$@" ;;
 boot) shift;                    cmd_boot "$@" ;; 
 create) shift;                  cmd_create "$@" ;; 
 clone) shift;                   cmd_clone "$@" ;; 
-list) shift;                    cmd_list "$@" ;; 
+list | ls) shift;               cmd_list "$@" ;; 
 config) shift;                  cmd_config "$@" ;; 
 help|-h|--help) shift;          cmd_usage "$@" ;;
 version|-v|--version) shift;    cmd_version "$@" ;;
