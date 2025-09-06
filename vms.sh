@@ -366,7 +366,14 @@ cmd_list() {
                     local start_seconds=$((boot_time + starttime / 100))
                     local current_seconds=$(date +%s)
                     local uptime_seconds=$((current_seconds - start_seconds))
-                    uptime=$(printf "%dd %02d:%02d:%02d" $((uptime_seconds/86400)) $((uptime_seconds%86400/3600)) $((uptime_seconds%3600/60)) $((uptime_seconds%60)))
+
+                    local days=$((uptime_seconds/86400))
+                    local hours=$((uptime_seconds%86400/3600))
+                    local minutes=$((uptime_seconds%3600/60))
+                    local seconds=$((uptime_seconds%60))
+
+                    uptime=$(printf "%dd %02d:%02d:%02d" "$days" "$hours" "$minutes" "$seconds")
+
                 fi
             fi
             vm_status="RUNNING   PID: $pid - Uptime: ${uptime:-unknown}"
@@ -415,7 +422,7 @@ cmd_version() {
 	===========================================
 	vms: a simple script to manage headless VMs
 	
-	                 v0.3.0
+	                 v0.4.0
 	
 	                 hozan23
 	          hozan23@karyontech.net
