@@ -1,0 +1,103 @@
+vms - simple headless VM manager
+================================
+vms is a small bash script to manage multiple headless QEMU VMs
+without a graphical interface. It uses minimal QEMU arguments to
+avoid excessive CPU usage and is meant to be driven over ssh,
+sshfs, and rsync.
+
+
+Requirements
+------------
+qemu-img and qemu-system-x86_64.
+
+Optional: socat, to use `vms monitor`.
+
+
+Installation
+------------
+Enter the following command:
+
+    make PREFIX=~/.local install
+
+
+Usage
+-----
+The first invocation creates ~/vms to hold VM images and configs.
+
+Create a new VM image:
+
+    vms create arch 50G
+
+Optional -f/-o flags are passed straight to qemu-img, e.g. to
+use qcow2 with nocow:
+
+    vms create arch 50G -f qcow2 -o nocow=on
+
+Review or tweak the VM config in $EDITOR (or the global config
+if no name is given), then boot from an ISO:
+
+    vms edit arch
+    vms boot arch ~/downloads/arch.iso
+
+Once installed, start and stop:
+
+    vms start arch
+    vms stop arch
+
+List all VMs, or just their port mappings:
+
+    vms list
+    vms ports
+
+Attach to a running VM's QEMU monitor (requires monitor=socket
+in the VM config):
+
+    vms monitor arch
+
+Clone a VM (copies both the disk image and the config):
+
+    vms clone arch arch2
+
+
+Configuration
+-------------
+Each VM has a config file at ~/vms/NAME/config containing
+key=value lines. Default values:
+
+    smp=<nproc>
+    ram=12G
+    cpu=host
+    accel=kvm
+    image=image.img
+    image_format=raw
+    drive_opts=
+    ports=10022:22 8080:80
+    nic=user
+    display=sdl
+    monitor=stdio
+    serial=none
+    boot=menu=on
+    bios=/usr/share/qemu/bios.bin
+    machine=
+    audiodev=
+    devices=
+    daemonize=off
+
+
+Port ranges
+-----------
+The ports field supports port ranges. Both sides must have the
+same number of ports.
+
+    # single port mapping
+    ports=10022:22
+
+    # range mapping: host 10022-10025 -> guest 22-25
+    ports=10022-10025:22-25
+
+
+Monitor
+-------
+To use `vms monitor NAME`, set monitor=socket in the VM config
+before starting the VM. QEMU will create a unix socket at
+~/vms/NAME/monitor.sock, which vms connects to via socat.

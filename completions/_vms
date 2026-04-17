@@ -1,0 +1,57 @@
+#compdef vms
+
+_vms_names() {
+    local -a names
+    local d
+    for d in ~/vms/*(/N); do
+        [[ -f "$d/config" ]] && names+=("${d:t}")
+    done
+    _describe 'vm' names
+}
+
+_vms_commands() {
+    local -a cmds=(
+        'start:start a VM'
+        'stop:stop a running VM'
+        'boot:boot a VM from an ISO'
+        'create:create a new VM'
+        'clone:clone an existing VM'
+        'list:list all VMs'
+        'ls:list all VMs'
+        'ports:list port mappings'
+        'monitor:attach to a VM monitor socket'
+        'edit:edit a VM config (or the global config)'
+        'help:show help'
+        'version:show version'
+    )
+    _describe 'command' cmds
+}
+
+_vms() {
+    local context state line
+    typeset -A opt_args
+
+    _arguments -C \
+        '1: :_vms_commands' \
+        '*::arg:->args'
+
+    [[ $state == args ]] || return
+
+    case $line[1] in
+        start|stop|monitor|edit)
+            _arguments ':vm:_vms_names'
+            ;;
+        clone)
+            _arguments \
+                ':source vm:_vms_names' \
+                ':target vm name: '
+            ;;
+        boot)
+            _arguments \
+                ':vm:_vms_names' \
+                ':iso:_files -g "*.iso"'
+            ;;
+    esac
+}
+
+_vms "$@"
