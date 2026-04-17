@@ -14,7 +14,9 @@ declare -A vm_config=(
     [boot]="menu=on"
     [ram]="12G"
     [cpu]="host"
+    [image]="image.img"
     [image_format]="raw"
+    [drive_opts]=""
     [smp]=$(nproc)
     [display]="sdl"
     [monitor]="stdio"
@@ -129,7 +131,11 @@ run_qemu() {
     local key
     for key in "${!qemu_flags[@]}"; do
         if [ -n "${vm_config[$key]}" ]; then
-            qemu_args+=("${qemu_flags[$key]}" "${vm_config[$key]}")
+            local val="${vm_config[$key]}"
+            if [ "$key" = "monitor" ] && [ "$val" = "socket" ]; then
+                val="unix:$vm_path/monitor.sock,server,nowait"
+            fi
+            qemu_args+=("${qemu_flags[$key]}" "$val")
         fi
     done
 
@@ -145,7 +151,38 @@ run_qemu() {
             if [ ${#p[@]} != 2 ]; then
                 die "error: wrong port: ${p[*]}"
             fi
-            qemu_net_arg+=",hostfwd=tcp::${p[0]}-:${p[1]}"
+
+            local host="${p[0]}"
+            local guest="${p[1]}"
+
+            if [[ "$host" == *-* || "$guest" == *-* ]]; then
+                if [[ "$host" != *-* || "$guest" != *-* ]]; then
+                    die "error: port range must be specified on both sides: $ports"
+                fi
+
+                local host_start=${host%-*}
+                local host_end=${host#*-}
+                local guest_start=${guest%-*}
+                local guest_end=${guest#*-}
+
+                if [ "$host_end" -lt "$host_start" ] || [ "$guest_end" -lt "$guest_start" ]; then
+                    die "error: port range end before start: $ports"
+                fi
+
+                local host_count=$((host_end - host_start))
+                local guest_count=$((guest_end - guest_start))
+
+                if [ "$host_count" != "$guest_count" ]; then
+                    die "error: port range mismatch: $ports"
+                fi
+
+                local i
+                for ((i = 0; i <= host_count; i++)); do
+                    qemu_net_arg+=",hostfwd=tcp::$((host_start + i))-:$((guest_start + i))"
+                done
+            else
+                qemu_net_arg+=",hostfwd=tcp::${host}-:${guest}"
+            fi
         done
 
         qemu_args+=(-nic "$qemu_net_arg")
@@ -156,7 +193,7 @@ run_qemu() {
         qemu_args+=(-device "${device}")
     done
 
-    qemu-system-x86_64 "${qemu_args[@]}" "${@:1}" 
+    qemu-system-x86_64 "${qemu_args[@]}" "${@:1}"
 }
 
 create_new_vm() {
@@ -193,7 +230,7 @@ create_new_vm() {
         esac
     done
 
-    qemu-img create "${qemu_img_args[@]}" "$vms_path/$vm_name/image.img" "$image_size" 
+    qemu-img create "${qemu_img_args[@]}" "$vms_path/$vm_name/${vm_config[image]}" "$image_size"
 }
 
 
@@ -210,17 +247,17 @@ cmd_start() {
 
     local vm_name=$1
     local vm_path="$vms_path/$vm_name"
-    local img_path="$vm_path/image.img"
 
+    load_vm_config "$vm_name"
+
+    local img_path="$vm_path/${vm_config[image]}"
     file_exists "$img_path"
 
-    load_vm_config $vm_name
-
     local img_args=(
-        -drive "file=$img_path,format=${vm_config[image_format]}"
+        -drive "file=$img_path,format=${vm_config[image_format]}${vm_config[drive_opts]:+,${vm_config[drive_opts]}}"
     )
 
-    run_qemu $vm_path "${img_args[@]}"
+    run_qemu "$vm_path" "${img_args[@]}"
 }
 
 cmd_stop() {
@@ -245,19 +282,19 @@ cmd_boot() {
     local vm_name=$1
     local iso_path=$(realpath "$2")
     local vm_path="$vms_path/$vm_name"
-    local img_path="$vm_path/image.img"
 
+    load_vm_config "$vm_name"
+
+    local img_path="$vm_path/${vm_config[image]}"
     file_exists "$img_path"
     file_exists "$iso_path"
 
-    load_vm_config $vm_name
-
     local img_args=(
-        -drive "file=$img_path,format=${vm_config[image_format]}"
+        -drive "file=$img_path,format=${vm_config[image_format]}${vm_config[drive_opts]:+,${vm_config[drive_opts]}}"
         -cdrom "$iso_path"
     )
 
-    run_qemu $vm_path "${img_args[@]}"
+    run_qemu "$vm_path" "${img_args[@]}"
 }
 
 cmd_create() {
@@ -292,16 +329,13 @@ cmd_clone() {
     local target_vm_name=$2
     local source_vm_path="$vms_path/$source_vm_name"
     local target_vm_path="$vms_path/$target_vm_name"
-    local source_img_path="$source_vm_path/image.img"
     local source_config_path="$source_vm_path/config"
-    local target_img_path="$target_vm_path/image.img"
     local target_config_path="$target_vm_path/config"
 
     if [ ! -d "$source_vm_path" ]; then
         die "error: source VM '$source_vm_name' does not exist"
     fi
 
-    file_exists "$source_img_path"
     file_exists "$source_config_path"
 
     if [ -d "$target_vm_path" ]; then
@@ -310,6 +344,10 @@ cmd_clone() {
 
     load_vm_config "$source_vm_name"
     local source_format="${vm_config[image_format]}"
+    local source_img_path="$source_vm_path/${vm_config[image]}"
+    local target_img_path="$target_vm_path/${vm_config[image]}"
+
+    file_exists "$source_img_path"
 
     printf "Cloning VM '%s' to '%s'...\n" "$source_vm_name" "$target_vm_name"
 
@@ -334,25 +372,23 @@ cmd_clone() {
     printf "Note: You may want to update port mappings to avoid conflicts\n"
 }
 
-cmd_config() {
+cmd_edit() {
+    local editor="${EDITOR:-vi}"
     if [ "$#" -eq 0 ]; then
-        load_config config "$config_path"
-        print_config config 
+        exec "$editor" "$config_path"
     elif [ "$#" -eq 1 ]; then
-        if [ "$1" = "default" ]; then 
-            print_config vm_config 
-        else
-            load_vm_config $1 
-            print_config vm_config 
-        fi
+        local vm_conf_path="$vms_path/$1/config"
+        file_exists "$vm_conf_path"
+        exec "$editor" "$vm_conf_path"
     else
         die "error: wrong parameters"
     fi
 }
 
 cmd_list() {
-    for img in "$vms_path"/*/image.img; do
-        local vm_path=$(dirname $img)
+    for conf in "$vms_path"/*/config; do
+        [ -f "$conf" ] || continue
+        local vm_path=$(dirname $conf)
         local vm_name=$(basename $vm_path)
         local vm_status=""
         local pid_file="$vm_path/pid"
@@ -382,6 +418,33 @@ cmd_list() {
     done
 }
 
+cmd_monitor() {
+    check_params $# 1
+
+    local vm_name=$1
+    local sock="$vms_path/$vm_name/monitor.sock"
+
+    if [ ! -S "$sock" ]; then
+        die "error: monitor socket not found at $sock (is the VM running with monitor=socket?)"
+    fi
+
+    if ! command -v socat &>/dev/null; then
+        die "error: socat is required for 'vms monitor' (install socat)"
+    fi
+    exec socat -,echo=0,icanon=0 "UNIX-CONNECT:$sock"
+}
+
+cmd_ports() {
+    for conf in "$vms_path"/*/config; do
+        [ -f "$conf" ] || continue
+        local vm_path=$(dirname $conf)
+        local vm_name=$(basename $vm_path)
+        local -A conf_data=()
+        load_config conf_data "$conf"
+        printf " - %-20s %s\n" "$vm_name" "${conf_data[ports]:-(none)}"
+    done
+}
+
 cmd_usage() {
 	cat <<-_EOF
 	Usage: vms COMMAND [ARGS...]
@@ -401,15 +464,18 @@ cmd_usage() {
 	  vms clone SOURCE_VM_NAME TARGET_VM_NAME
 	    clone an existing virtual machine to create a new one.
 	    this copies both the disk image and configuration file.
-	  vms config VM_NAME
-	    Print the configuration file for a virtual machine.
-	    Additional Usages:
-	      vms config default        Show the default config used for VMs. 
-	      vms config                Show the global vms config
 	  vms list
-	    List all available virtual machines along with their current 
+	    List all available virtual machines along with their current
 	    status (e.g., running, stopped).
-	  vms version 
+	  vms ports
+	    List all virtual machines along with their configured port mappings.
+	  vms monitor VM_NAME
+	    Attach to a VM's QEMU monitor socket.
+	    Requires monitor=socket in the VM config and socat installed.
+	  vms edit [VM_NAME]
+	    Open the VM's config in \$EDITOR. If no VM_NAME is given,
+	    opens the global vms config instead.
+	  vms version
 	    Show version information.
 	Options:
 	  -h, --help
@@ -422,7 +488,7 @@ cmd_version() {
 	===========================================
 	vms: a simple script to manage headless VMs
 	
-	                 v0.4.0
+	                 v0.5.0
 	
 	                 hozan23
 	          hozan23@karyontech.net
@@ -439,17 +505,19 @@ if [ -z "$1" ]; then
 fi
 
 case "$1" in
-    start|boot|create|list|config|monitor) initialize ;;
+    start|boot|create|list|ports|monitor|edit) initialize ;;
 esac
 
 case "$1" in
-start) shift;                   cmd_start "$@" ;; 
-stop) shift;                    cmd_stop "$@" ;; 
-boot) shift;                    cmd_boot "$@" ;; 
-create) shift;                  cmd_create "$@" ;; 
-clone) shift;                   cmd_clone "$@" ;; 
-list | ls) shift;               cmd_list "$@" ;; 
-config) shift;                  cmd_config "$@" ;; 
+start) shift;                   cmd_start "$@" ;;
+stop) shift;                    cmd_stop "$@" ;;
+boot) shift;                    cmd_boot "$@" ;;
+create) shift;                  cmd_create "$@" ;;
+clone) shift;                   cmd_clone "$@" ;;
+list | ls) shift;               cmd_list "$@" ;;
+ports) shift;                   cmd_ports "$@" ;;
+monitor) shift;                 cmd_monitor "$@" ;;
+edit) shift;                    cmd_edit "$@" ;;
 help|-h|--help) shift;          cmd_usage "$@" ;;
 version|-v|--version) shift;    cmd_version "$@" ;;
 *)                              die "error: command $1 not found" ;;
