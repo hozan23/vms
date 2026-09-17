@@ -503,7 +503,7 @@ cmd_version() {
 	===========================================
 	vms: a simple script to manage headless VMs
 	
-	                 v0.5.0
+	                 v0.5.1
 	
 	                 hozan23
 	          hozan23@karyontech.net
