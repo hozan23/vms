@@ -41,6 +41,7 @@ declare -A qemu_flags=(
     [machine]=-machine
     [audiodev]=-audiodev
     [display]=-display
+    [serial]=-serial
 )
 
 #
@@ -68,7 +69,7 @@ initialize() {
 load_config() {
     local -n conf=$1
     local file="$2" value
-    while read -r value; do
+    while read -r value || [ -n "$value" ]; do
         # Check if the line contains an equals sign
         if [[ $value = *?=* ]]; then
             # skip if it's a comment
@@ -93,7 +94,7 @@ save_config() {
 print_config() {
     local -n conf=$1
     for k in "${!conf[@]}"; do
-        printf "$k=${conf[$k]}\n"
+        printf "%s=%s\n" "$k" "${conf[$k]}"
     done
 }
 
@@ -112,6 +113,12 @@ check_params() {
     if [ "$1" -lt "$2" ]; then
         die "error: wrong parameters"
     fi
+}
+
+check_vm_name() {
+    case "$1" in
+        ""|.|..|*/*) die "error: invalid VM name '$1'" ;;
+    esac
 }
 
 load_vm_config() {
@@ -145,7 +152,7 @@ run_qemu() {
 
     if [ -n "${vm_config[nic]}" ]; then
         local qemu_net_arg="${vm_config[nic]}"
-        local ports
+        local ports p
         for ports in ${vm_config[ports]}; do
             IFS=':' read -ra p <<<"$ports"
             if [ ${#p[@]} != 2 ]; then
@@ -230,6 +237,7 @@ create_new_vm() {
         esac
     done
 
+    mkdir -p "$vms_path/$vm_name"
     qemu-img create "${qemu_img_args[@]}" "$vms_path/$vm_name/${vm_config[image]}" "$image_size"
 }
 
@@ -244,6 +252,7 @@ create_new_vm() {
 
 cmd_start() {
     check_params $# 1
+    check_vm_name "$1"
 
     local vm_name=$1
     local vm_path="$vms_path/$vm_name"
@@ -262,12 +271,13 @@ cmd_start() {
 
 cmd_stop() {
     check_params $# 1
+    check_vm_name "$1"
 
     local vm_name=$1
     local pid_path="$vms_path/$vm_name/pid"
 
-    if [ -f $pid_path ]; then
-        kill "$(cat $pid_path)"
+    if [ -f "$pid_path" ]; then
+        kill "$(cat "$pid_path")"
     else
         die "$vm_name is not running"
     fi
@@ -276,8 +286,7 @@ cmd_stop() {
 
 cmd_boot() {
     check_params $# 2
-
-
+    check_vm_name "$1"
 
     local vm_name=$1
     local iso_path=$(realpath "$2")
@@ -299,6 +308,7 @@ cmd_boot() {
 
 cmd_create() {
     check_params $# 2
+    check_vm_name "$1"
     local vm_name=$1
     local vm_path="$vms_path/$vm_name"
     local vm_conf_path="$vm_path/config"
@@ -307,9 +317,10 @@ cmd_create() {
         die "error:  VM '$vm_name'  already exists"
     fi
 
-    mkdir -p $vm_path 
-
-    create_new_vm "$@"
+    if ! create_new_vm "$@"; then
+        rm -rf "$vm_path"
+        die "error: failed to create disk image"
+    fi
 
     save_config vm_config "$vm_conf_path"
 
@@ -324,7 +335,9 @@ cmd_create() {
 
 cmd_clone() {
     check_params $# 2
-    
+    check_vm_name "$1"
+    check_vm_name "$2"
+
     local source_vm_name=$1
     local target_vm_name=$2
     local source_vm_path="$vms_path/$source_vm_name"
@@ -377,6 +390,7 @@ cmd_edit() {
     if [ "$#" -eq 0 ]; then
         exec "$editor" "$config_path"
     elif [ "$#" -eq 1 ]; then
+        check_vm_name "$1"
         local vm_conf_path="$vms_path/$1/config"
         file_exists "$vm_conf_path"
         exec "$editor" "$vm_conf_path"
@@ -388,8 +402,8 @@ cmd_edit() {
 cmd_list() {
     for conf in "$vms_path"/*/config; do
         [ -f "$conf" ] || continue
-        local vm_path=$(dirname $conf)
-        local vm_name=$(basename $vm_path)
+        local vm_path=$(dirname "$conf")
+        local vm_name=$(basename "$vm_path")
         local vm_status=""
         local pid_file="$vm_path/pid"
         if [ -f "$pid_file" ] && [ -d "/proc/$(cat "$pid_file" )" ]; then
@@ -420,6 +434,7 @@ cmd_list() {
 
 cmd_monitor() {
     check_params $# 1
+    check_vm_name "$1"
 
     local vm_name=$1
     local sock="$vms_path/$vm_name/monitor.sock"
@@ -437,8 +452,8 @@ cmd_monitor() {
 cmd_ports() {
     for conf in "$vms_path"/*/config; do
         [ -f "$conf" ] || continue
-        local vm_path=$(dirname $conf)
-        local vm_name=$(basename $vm_path)
+        local vm_path=$(dirname "$conf")
+        local vm_name=$(basename "$vm_path")
         local -A conf_data=()
         load_config conf_data "$conf"
         printf " - %-20s %s\n" "$vm_name" "${conf_data[ports]:-(none)}"
@@ -488,7 +503,7 @@ cmd_version() {
 	===========================================
 	vms: a simple script to manage headless VMs
 	
-	                 v0.5.0
+	                 v0.5.1
 	
 	                 hozan23
 	          hozan23@karyontech.net
@@ -502,6 +517,7 @@ cmd_version() {
 #
 if [ -z "$1" ]; then
     cmd_usage
+    exit 0
 fi
 
 case "$1" in

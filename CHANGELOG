@@ -1,0 +1,101 @@
+Changelog
+=========
+
+0.5.1 - 2026-09-17
+------------------
+Fixed:
+  - the serial config key is now passed to QEMU as -serial.
+  - a failed 'vms create' removes the half-made VM directory.
+  - running vms with no arguments prints usage and exits 0 instead
+    of also printing "command not found".
+  - config values containing % no longer break 'vms create' output.
+  - pid file, dirname and basename expansions are quoted.
+  - a final config line without a trailing newline is now read.
+
+Added:
+  - VM names must not be empty, ".", ".." or contain a slash.
+
+
+0.5.0 - 2026-04-17
+------------------
+Changed (breaking):
+  - 'config' subcommand removed. Use 'edit' to open a config in
+    $EDITOR instead of printing it; 'config default' has no
+    replacement.
+
+Added:
+  - 'monitor' subcommand: attach to a VM's QEMU monitor socket.
+    Requires monitor=socket in the VM config and socat.
+  - 'edit' subcommand: open a VM config, or the global config with
+    no argument, in $EDITOR.
+  - 'ports' subcommand: list the port mappings of all VMs.
+  - port ranges in the ports field, e.g. 10022-10025:22-25.
+  - image and drive_opts config fields: the disk image file name
+    and extra -drive options.
+  - bash and zsh completion files under completions/.
+
+Changed:
+  - README.md converted to a plain text README.
+
+
+0.4.0 - 2025-09-06
+------------------
+Changed (breaking):
+  - the disk image lives at ~/vms/NAME/image.img instead of
+    ~/vms/NAME/NAME.img.
+  - config field bios_path renamed to bios, net renamed to nic
+    (default: user).
+  - empty config fields are omitted from the QEMU command line
+    instead of being passed as empty values.
+
+Added:
+  - 'clone' subcommand: copy a VM's disk image and config.
+  - 'ls' alias for 'list'.
+  - accel (default: kvm), machine and audiodev config fields.
+  - 'create' refuses to overwrite an existing VM and prints the
+    generated config.
+  - 'list' shows the PID and uptime of running VMs.
+
+
+0.3.0 - 2025-06-07
+------------------
+Changed (breaking):
+  - 'run' subcommand renamed to 'start'.
+  - nocow config field removed; pass -o nocow=on to 'create'
+    instead.
+  - config files are written with active key=value lines instead
+    of commented-out defaults.
+  - display default is now sdl without grab-mod, and devices
+    defaults to empty.
+
+Added:
+  - -f and -o flags on 'create' are passed through to qemu-img.
+  - 'list' shows the PID of running VMs.
+
+Changed:
+  - more compact help output.
+
+
+0.2.0 - 2025-05-09
+------------------
+Changed (breaking):
+  - each VM lives in its own directory ~/vms/NAME/ holding config
+    and NAME.img, instead of ~/vms/NAME.conf and ~/vms/NAME.img.
+  - config fields graphic, audio, audiodevices and vgadevices
+    removed; use devices instead.
+  - script restructured into one function per subcommand.
+
+Added:
+  - 'stop' subcommand, using a QEMU pid file per VM.
+  - 'help' and 'version' subcommands.
+  - monitor, serial and daemonize config fields.
+  - GPLv3 license.
+
+
+0.1.0 - 2024-12-24
+------------------
+  - initial release: run, boot, create, config and list subcommands
+    for QEMU VMs under ~/vms.
+  - per-VM config file with graphic, audio, boot, ram, cpu, nocow,
+    image_format, smp, display, ports, audiodevices, vgadevices,
+    devices, bios_path and net fields.
