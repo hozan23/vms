@@ -1,6 +1,14 @@
 Changelog
 =========
 
+0.5.2 - 2026-09-18
+------------------
+Added:
+  - objects config field: each space-separated entry is passed to
+    QEMU as -object, for use with devices that need a backend such
+    as memory-backend-ram for virtio-mem-pci.
+
+
 0.5.1 - 2026-09-17
 ------------------
 Fixed:

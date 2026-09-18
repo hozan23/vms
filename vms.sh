@@ -23,6 +23,7 @@ declare -A vm_config=(
     [serial]="none"
     [ports]="10022:22 8080:80"
     [daemonize]="off"
+    [objects]=
     [devices]=
     [bios]="/usr/share/qemu/bios.bin"
     [nic]="user"
@@ -194,6 +195,11 @@ run_qemu() {
 
         qemu_args+=(-nic "$qemu_net_arg")
     fi
+
+    local object
+    for object in ${vm_config[objects]}; do
+        qemu_args+=(-object "${object}")
+    done
 
     local device
     for device in ${vm_config[devices]}; do
@@ -503,7 +509,7 @@ cmd_version() {
 	===========================================
 	vms: a simple script to manage headless VMs
 	
-	                 v0.5.1
+	                 v0.5.2
 	
 	                 hozan23
 	          hozan23@karyontech.net
