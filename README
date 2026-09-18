@@ -80,6 +80,7 @@ key=value lines. Default values:
     bios=/usr/share/qemu/bios.bin
     machine=
     audiodev=
+    objects=
     devices=
     daemonize=off
 
