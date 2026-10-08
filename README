@@ -10,7 +10,7 @@ Requirements
 ------------
 qemu-img and qemu-system-x86_64.
 
-Optional: socat, to use `vms monitor`.
+Optional: socat, to use `vms monitor` and `vms console`.
 
 
 Installation
@@ -28,8 +28,8 @@ Create a new VM image:
 
     vms create arch 50G
 
-Optional -f/-o flags are passed straight to qemu-img, e.g. to
-use qcow2 with nocow:
+Extra arguments are passed straight to qemu-img, e.g. to use
+qcow2 with nocow:
 
     vms create arch 50G -f qcow2 -o nocow=on
 
@@ -44,19 +44,41 @@ Once installed, start and stop:
     vms start arch
     vms stop arch
 
+Extra arguments go to qemu, e.g. discard disk writes on exit:
+
+    vms start arch -snapshot
+
 List all VMs, or just their port mappings:
 
     vms list
     vms ports
 
-Attach to a running VM's QEMU monitor (requires monitor=socket
-in the VM config):
+Attach to a running VM's QEMU monitor or serial console:
 
     vms monitor arch
+    vms console arch
 
 Clone a VM (copies both the disk image and the config):
 
     vms clone arch arch2
+
+
+Sandboxes
+---------
+A sandbox is a throwaway VM over a locked base. Lock a stopped
+VM, then add sandboxes from it:
+
+    vms lock arch
+    vms sandbox add arch task1
+    vms start task1
+    vms stop task1
+    vms sandbox rm task1
+    vms sandbox list
+
+A sandbox is a normal VM otherwise. Extra 'sandbox add' arguments
+go to qemu-img verbatim, e.g. -o nocow=on. 'unlock' makes a base
+an ordinary VM again once it has no sandboxes. Do not modify a
+locked image by hand while sandboxes exist.
 
 
 Configuration
@@ -73,16 +95,24 @@ key=value lines. Default values:
     drive_opts=
     ports=10022:22 8080:80
     nic=user
-    display=sdl
-    monitor=stdio
-    serial=none
+    display=none
+    monitor=socket
+    serial=socket
     boot=menu=on
     bios=/usr/share/qemu/bios.bin
     machine=
     audiodev=
+    kernel=
+    initrd=
+    append=
     objects=
     devices=
-    daemonize=off
+    daemonize=on
+    role=
+    base=
+
+role and base are set by lock, unlock and sandbox. nic is passed
+to -nic verbatim; ports are appended only for user-mode networking.
 
 
 Port ranges
@@ -97,8 +127,8 @@ same number of ports.
     ports=10022-10025:22-25
 
 
-Monitor
--------
-To use `vms monitor NAME`, set monitor=socket in the VM config
-before starting the VM. QEMU will create a unix socket at
-~/vms/NAME/monitor.sock, which vms connects to via socat.
+Monitor and console
+-------------------
+monitor=socket and serial=socket create ~/vms/NAME/monitor.sock and
+serial.sock; `vms monitor` and `vms console` connect via socat. New
+VMs have display=none; set display=sdl for a graphical installer.

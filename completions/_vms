@@ -9,6 +9,16 @@ _vms_names() {
     _describe 'vm' names
 }
 
+# _vms_by_role ROLE: VMs whose config has role=ROLE
+_vms_by_role() {
+    local -a names
+    local d
+    for d in ~/vms/*(/N); do
+        grep -qx "role=$1" "$d/config" 2>/dev/null && names+=("${d:t}")
+    done
+    _describe "$1" names
+}
+
 _vms_commands() {
     local -a cmds=(
         'start:start a VM'
@@ -20,11 +30,25 @@ _vms_commands() {
         'ls:list all VMs'
         'ports:list port mappings'
         'monitor:attach to a VM monitor socket'
+        'console:attach to a VM serial console'
         'edit:edit a VM config (or the global config)'
+        'lock:turn a VM into a read-only base'
+        'unlock:turn a base back into a VM'
+        'sandbox:manage sandboxes'
         'help:show help'
         'version:show version'
     )
     _describe 'command' cmds
+}
+
+_vms_sandbox_commands() {
+    local -a cmds=(
+        'add:create a sandbox from a base'
+        'rm:delete a sandbox'
+        'list:list sandboxes'
+        'ls:list sandboxes'
+    )
+    _describe 'sandbox command' cmds
 }
 
 _vms() {
@@ -38,7 +62,7 @@ _vms() {
     [[ $state == args ]] || return
 
     case $line[1] in
-        start|stop|monitor|edit)
+        start|stop|monitor|console|edit|lock|unlock)
             _arguments ':vm:_vms_names'
             ;;
         clone)
@@ -50,6 +74,18 @@ _vms() {
             _arguments \
                 ':vm:_vms_names' \
                 ':iso:_files -g "*.iso"'
+            ;;
+        sandbox)
+            case $CURRENT in
+                2) _vms_sandbox_commands ;;
+                3)
+                    case $words[2] in
+                        add) _vms_by_role base ;;
+                        rm) _vms_by_role sandbox ;;
+                    esac
+                    ;;
+                4) [[ $words[2] == add ]] && _message 'sandbox name' ;;
+            esac
             ;;
     esac
 }
