@@ -18,17 +18,26 @@ declare -A vm_config=(
     [image_format]="raw"
     [drive_opts]=""
     [smp]=$(nproc)
-    [display]="sdl"
-    [monitor]="stdio"
-    [serial]="none"
+    # display: none, sdl, gtk, curses, etc.
+    [display]="none"
+    # monitor/serial: socket (a unix socket in ~/vms/NAME/), stdio, none, etc.
+    [monitor]="socket"
+    [serial]="socket"
     [ports]="10022:22 8080:80"
-    [daemonize]="off"
+    [daemonize]="on"
     [objects]=
     [devices]=
     [bios]="/usr/share/qemu/bios.bin"
     [nic]="user"
     [machine]=""
     [audiodev]=""
+    [kernel]=""
+    [initrd]=""
+    [append]=""
+    # role: empty for an ordinary VM, base or sandbox (set by lock/unlock/sandbox)
+    [role]=""
+    # base: the locked VM a sandbox was created from (set by sandbox add)
+    [base]=""
 )
 
 declare -A qemu_flags=(
@@ -41,6 +50,9 @@ declare -A qemu_flags=(
     [bios]=-bios
     [machine]=-machine
     [audiodev]=-audiodev
+    [kernel]=-kernel
+    [initrd]=-initrd
+    [append]=-append
     [display]=-display
     [serial]=-serial
 )
@@ -87,14 +99,14 @@ save_config() {
     local -n conf=$1
     local file="$2" key
     printf "### Default configuration\n" >"$file"
-    for key in "${!conf[@]}"; do
+    for key in $(printf "%s\n" "${!conf[@]}" | sort); do
         printf "%s=%s\n" "$key" "${conf[$key]}" >>"$file"
     done
 }
 
 print_config() {
     local -n conf=$1
-    for k in "${!conf[@]}"; do
+    for k in $(printf "%s\n" "${!conf[@]}" | sort); do
         printf "%s=%s\n" "$k" "${conf[$k]}"
     done
 }
@@ -118,14 +130,50 @@ check_params() {
 
 check_vm_name() {
     case "$1" in
-        ""|.|..|*/*) die "error: invalid VM name '$1'" ;;
+        ""|.|..) die "error: invalid VM name '$1'" ;;
     esac
+    [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] || die "error: invalid VM name '$1'"
 }
 
 load_vm_config() {
     vm_conf_path="$vms_path/$1/config"
     file_exists "$vm_conf_path"
     load_config vm_config "$vm_conf_path"
+}
+
+set_config() {
+    local file="$1" key="$2" value="$3"
+    file_exists "$file"
+    if grep -q "^$key=" "$file"; then
+        sed -i "s|^$key=.*|$key=$value|" "$file"
+    else
+        printf "%s=%s\n" "$key" "$value" >>"$file"
+    fi
+}
+
+vm_running() {
+    local pid_file="$vms_path/$1/pid" pid
+    [ -f "$pid_file" ] || return 1
+    pid=$(cat "$pid_file")
+    [ -n "$pid" ] && [ -d "/proc/$pid" ]
+}
+
+sandboxes_of() {
+    local conf
+    for conf in "$vms_path"/*/config; do
+        [ -f "$conf" ] || continue
+        local -A c=()
+        load_config c "$conf"
+        if [ "${c[base]}" = "$1" ]; then
+            basename "$(dirname "$conf")"
+        fi
+    done
+}
+
+refuse_base() {
+    if [ "${vm_config[role]}" = "base" ]; then
+        die "error: '$1' is a base and cannot be used directly, add a sandbox: vms sandbox add $1 NAME"
+    fi
 }
 
 run_qemu() {
@@ -140,9 +188,9 @@ run_qemu() {
     for key in "${!qemu_flags[@]}"; do
         if [ -n "${vm_config[$key]}" ]; then
             local val="${vm_config[$key]}"
-            if [ "$key" = "monitor" ] && [ "$val" = "socket" ]; then
-                val="unix:$vm_path/monitor.sock,server,nowait"
-            fi
+            case "$key:$val" in
+                monitor:socket|serial:socket) val="unix:$vm_path/$key.sock,server,nowait" ;;
+            esac
             qemu_args+=("${qemu_flags[$key]}" "$val")
         fi
     done
@@ -154,44 +202,47 @@ run_qemu() {
     if [ -n "${vm_config[nic]}" ]; then
         local qemu_net_arg="${vm_config[nic]}"
         local ports p
-        for ports in ${vm_config[ports]}; do
-            IFS=':' read -ra p <<<"$ports"
-            if [ ${#p[@]} != 2 ]; then
-                die "error: wrong port: ${p[*]}"
-            fi
-
-            local host="${p[0]}"
-            local guest="${p[1]}"
-
-            if [[ "$host" == *-* || "$guest" == *-* ]]; then
-                if [[ "$host" != *-* || "$guest" != *-* ]]; then
-                    die "error: port range must be specified on both sides: $ports"
+        # hostfwd is only valid for user-mode networking
+        if [[ "$qemu_net_arg" == user* ]]; then
+            for ports in ${vm_config[ports]}; do
+                IFS=':' read -ra p <<<"$ports"
+                if [ ${#p[@]} != 2 ]; then
+                    die "error: wrong port: ${p[*]}"
                 fi
 
-                local host_start=${host%-*}
-                local host_end=${host#*-}
-                local guest_start=${guest%-*}
-                local guest_end=${guest#*-}
+                local host="${p[0]}"
+                local guest="${p[1]}"
 
-                if [ "$host_end" -lt "$host_start" ] || [ "$guest_end" -lt "$guest_start" ]; then
-                    die "error: port range end before start: $ports"
+                if [[ "$host" == *-* || "$guest" == *-* ]]; then
+                    if [[ "$host" != *-* || "$guest" != *-* ]]; then
+                        die "error: port range must be specified on both sides: $ports"
+                    fi
+
+                    local host_start=${host%-*}
+                    local host_end=${host#*-}
+                    local guest_start=${guest%-*}
+                    local guest_end=${guest#*-}
+
+                    if [ "$host_end" -lt "$host_start" ] || [ "$guest_end" -lt "$guest_start" ]; then
+                        die "error: port range end before start: $ports"
+                    fi
+
+                    local host_count=$((host_end - host_start))
+                    local guest_count=$((guest_end - guest_start))
+
+                    if [ "$host_count" != "$guest_count" ]; then
+                        die "error: port range mismatch: $ports"
+                    fi
+
+                    local i
+                    for ((i = 0; i <= host_count; i++)); do
+                        qemu_net_arg+=",hostfwd=tcp::$((host_start + i))-:$((guest_start + i))"
+                    done
+                else
+                    qemu_net_arg+=",hostfwd=tcp::${host}-:${guest}"
                 fi
-
-                local host_count=$((host_end - host_start))
-                local guest_count=$((guest_end - guest_start))
-
-                if [ "$host_count" != "$guest_count" ]; then
-                    die "error: port range mismatch: $ports"
-                fi
-
-                local i
-                for ((i = 0; i <= host_count; i++)); do
-                    qemu_net_arg+=",hostfwd=tcp::$((host_start + i))-:$((guest_start + i))"
-                done
-            else
-                qemu_net_arg+=",hostfwd=tcp::${host}-:${guest}"
-            fi
-        done
+            done
+        fi
 
         qemu_args+=(-nic "$qemu_net_arg")
     fi
@@ -213,38 +264,29 @@ create_new_vm() {
     local vm_name="$1"
     local image_size="$2"
     shift 2
-
-    local qemu_img_args=()
-    local format_set=0
-
-    while [[ $# -gt 0 ]]; do
-        case "$1" in
-            -f)
-                if [[ -n "$2" ]]; then
-                    qemu_img_args+=(-f "$2")
-                    vm_config[image_format]=$2
-                    format_set=1
-                    shift 2
-                else
-                    die "error: -f requires an argument"
-                fi
-                ;;
-            -o)
-                if [[ -n "$2" ]]; then
-                    qemu_img_args+=(-o "$2")
-                    shift 2
-                else
-                    die "error: -o requires an argument"
-                fi
-                ;;
-            *)
-                die "error: unknown option '$1'"
-                ;;
-        esac
-    done
+    local img_path="$vms_path/$vm_name/${vm_config[image]}"
 
     mkdir -p "$vms_path/$vm_name"
-    qemu-img create "${qemu_img_args[@]}" "$vms_path/$vm_name/${vm_config[image]}" "$image_size"
+    # remaining arguments go to qemu-img verbatim, e.g. -f qcow2 -o nocow=on
+    qemu-img create "$@" "$img_path" "$image_size" || return 1
+
+    # record the format qemu-img actually used, for -drive format=
+    vm_config[image_format]=$(qemu-img info "$img_path" | awk -F": " '/^file format:/ {print $2}')
+    [ -n "${vm_config[image_format]}" ] || return 1
+}
+
+
+attach_socket() {
+    local sock="$vms_path/$1/$2"
+
+    if [ ! -S "$sock" ]; then
+        die "error: socket not found at $sock (is the VM running with $3?)"
+    fi
+
+    if ! command -v socat &>/dev/null; then
+        die "error: socat is required (install socat)"
+    fi
+    exec socat -,echo=0,icanon=0 "UNIX-CONNECT:$sock"
 }
 
 
@@ -262,8 +304,14 @@ cmd_start() {
 
     local vm_name=$1
     local vm_path="$vms_path/$vm_name"
+    shift
 
     load_vm_config "$vm_name"
+
+    if vm_running "$vm_name"; then
+        die "error: '$vm_name' is already running (PID $(cat "$vm_path/pid"))"
+    fi
+    refuse_base "$vm_name"
 
     local img_path="$vm_path/${vm_config[image]}"
     file_exists "$img_path"
@@ -272,7 +320,8 @@ cmd_start() {
         -drive "file=$img_path,format=${vm_config[image_format]}${vm_config[drive_opts]:+,${vm_config[drive_opts]}}"
     )
 
-    run_qemu "$vm_path" "${img_args[@]}"
+    # remaining arguments go to qemu verbatim, e.g. -snapshot
+    run_qemu "$vm_path" "${img_args[@]}" "$@"
 }
 
 cmd_stop() {
@@ -282,7 +331,7 @@ cmd_stop() {
     local vm_name=$1
     local pid_path="$vms_path/$vm_name/pid"
 
-    if [ -f "$pid_path" ]; then
+    if vm_running "$vm_name"; then
         kill "$(cat "$pid_path")"
     else
         die "$vm_name is not running"
@@ -299,6 +348,15 @@ cmd_boot() {
     local vm_path="$vms_path/$vm_name"
 
     load_vm_config "$vm_name"
+
+    if vm_running "$vm_name"; then
+        die "error: '$vm_name' is already running (PID $(cat "$vm_path/pid"))"
+    fi
+    refuse_base "$vm_name"
+
+    if [ "${vm_config[display]}" = "none" ]; then
+        printf "note: display=none, attach a console with 'vms console %s' or set display=sdl for a graphical installer\n" "$vm_name" >&2
+    fi
 
     local img_path="$vm_path/${vm_config[image]}"
     file_exists "$img_path"
@@ -357,6 +415,10 @@ cmd_clone() {
 
     file_exists "$source_config_path"
 
+    if vm_running "$source_vm_name"; then
+        die "error: stop '$source_vm_name' before cloning it"
+    fi
+
     if [ -d "$target_vm_path" ]; then
         die "error: target VM '$target_vm_name' already exists"
     fi
@@ -386,6 +448,11 @@ cmd_clone() {
         die "error: failed to copy configuration file"
     fi
 
+    if [ -n "${vm_config[role]}" ]; then
+        set_config "$target_config_path" role ""
+        set_config "$target_config_path" base ""
+    fi
+
     printf "Successfully cloned VM '%s' to '%s'\n" "$source_vm_name" "$target_vm_name"
     printf "You can now modify the config file: %s\n" "$target_config_path"
     printf "Note: You may want to update port mappings to avoid conflicts\n"
@@ -412,7 +479,7 @@ cmd_list() {
         local vm_name=$(basename "$vm_path")
         local vm_status=""
         local pid_file="$vm_path/pid"
-        if [ -f "$pid_file" ] && [ -d "/proc/$(cat "$pid_file" )" ]; then
+        if vm_running "$vm_name"; then
             local pid=$(cat "$pid_file")
             local uptime=""
             if [ -f "/proc/$pid/stat" ]; then
@@ -434,25 +501,27 @@ cmd_list() {
             fi
             vm_status="RUNNING   PID: $pid - Uptime: ${uptime:-unknown}"
         fi
-        printf " - %s %s\n" "$vm_name" "$vm_status"
+        local -A conf_data=()
+        load_config conf_data "$conf"
+        local role_label=""
+        case "${conf_data[role]}" in
+            base) role_label="[base]" ;;
+            sandbox) role_label="[sandbox of ${conf_data[base]}]" ;;
+        esac
+        printf " - %s%s%s\n" "$vm_name" "${role_label:+ $role_label}" "${vm_status:+ $vm_status}"
     done
 }
 
 cmd_monitor() {
     check_params $# 1
     check_vm_name "$1"
+    attach_socket "$1" monitor.sock "monitor=socket"
+}
 
-    local vm_name=$1
-    local sock="$vms_path/$vm_name/monitor.sock"
-
-    if [ ! -S "$sock" ]; then
-        die "error: monitor socket not found at $sock (is the VM running with monitor=socket?)"
-    fi
-
-    if ! command -v socat &>/dev/null; then
-        die "error: socat is required for 'vms monitor' (install socat)"
-    fi
-    exec socat -,echo=0,icanon=0 "UNIX-CONNECT:$sock"
+cmd_console() {
+    check_params $# 1
+    check_vm_name "$1"
+    attach_socket "$1" serial.sock "serial=socket"
 }
 
 cmd_ports() {
@@ -466,22 +535,168 @@ cmd_ports() {
     done
 }
 
+cmd_lock() {
+    check_params $# 1
+    check_vm_name "$1"
+
+    local vm_name=$1
+    local vm_path="$vms_path/$vm_name"
+
+    load_vm_config "$vm_name"
+
+    case "${vm_config[role]}" in
+        base) die "error: '$vm_name' is already a base" ;;
+        sandbox) die "error: '$vm_name' is a sandbox, clone it into a standalone VM first" ;;
+    esac
+
+    if vm_running "$vm_name"; then
+        die "error: stop '$vm_name' before locking it"
+    fi
+
+    local img_path="$vm_path/${vm_config[image]}"
+    file_exists "$img_path"
+
+    chmod a-w "$img_path"
+    set_config "$vm_path/config" role base
+
+    printf "'%s' is now a base. Add sandboxes with: vms sandbox add %s NAME\n" "$vm_name" "$vm_name"
+}
+
+cmd_unlock() {
+    check_params $# 1
+    check_vm_name "$1"
+
+    local vm_name=$1
+    local vm_path="$vms_path/$vm_name"
+
+    load_vm_config "$vm_name"
+
+    if [ "${vm_config[role]}" != "base" ]; then
+        die "error: '$vm_name' is not a base"
+    fi
+
+    local deps
+    deps=$(sandboxes_of "$vm_name" | paste -sd' ')
+    if [ -n "$deps" ]; then
+        die "error: '$vm_name' still has sandboxes: $deps"
+    fi
+
+    chmod u+w "$vm_path/${vm_config[image]}"
+    set_config "$vm_path/config" role ""
+
+    printf "'%s' is an ordinary VM again\n" "$vm_name"
+}
+
+cmd_sandbox_add() {
+    check_params $# 2
+    check_vm_name "$1"
+    check_vm_name "$2"
+
+    local base_name=$1
+    local vm_name=$2
+    shift 2
+
+    local base_path="$vms_path/$base_name"
+    local vm_path="$vms_path/$vm_name"
+
+    load_vm_config "$base_name"
+
+    if [ "${vm_config[role]}" != "base" ]; then
+        die "error: '$base_name' is not a base, lock it first: vms lock $base_name"
+    fi
+
+    local image="${vm_config[image]}"
+    file_exists "$base_path/$image"
+
+    if [ -d "$vm_path" ]; then
+        die "error: VM '$vm_name' already exists"
+    fi
+
+    mkdir -p "$vm_path"
+
+    # remaining arguments go to qemu-img verbatim, e.g. -o nocow=on
+    if ! qemu-img create -f qcow2 \
+        -o "backing_file=../$base_name/$image,backing_fmt=${vm_config[image_format]}" \
+        "$@" "$vm_path/$image"; then
+        rm -rf "$vm_path"
+        die "error: failed to create sandbox image"
+    fi
+
+    cp "$base_path/config" "$vm_path/config"
+    set_config "$vm_path/config" role sandbox
+    set_config "$vm_path/config" base "$base_name"
+    set_config "$vm_path/config" image_format qcow2
+
+    printf "Added sandbox '%s' from '%s'\n" "$vm_name" "$base_name"
+    printf "Note: You may want to update port mappings to avoid conflicts\n"
+}
+
+cmd_sandbox_rm() {
+    check_params $# 1
+    check_vm_name "$1"
+
+    local vm_name=$1
+    local vm_path="$vms_path/$vm_name"
+
+    load_vm_config "$vm_name"
+
+    if [ "${vm_config[role]}" != "sandbox" ]; then
+        die "error: '$vm_name' is not a sandbox, remove it by hand: rm -r $vm_path"
+    fi
+
+    if vm_running "$vm_name"; then
+        die "error: stop '$vm_name' before removing it"
+    fi
+
+    rm -rf "$vm_path"
+    printf "Removed sandbox '%s'\n" "$vm_name"
+}
+
+cmd_sandbox_list() {
+    local conf
+    for conf in "$vms_path"/*/config; do
+        [ -f "$conf" ] || continue
+        local -A c=()
+        load_config c "$conf"
+        [ "${c[role]}" = "sandbox" ] || continue
+        local vm_name=$(basename "$(dirname "$conf")")
+        local vm_status=""
+        if vm_running "$vm_name"; then
+            vm_status="RUNNING"
+        fi
+        printf " - %-20s base: %s%s\n" "$vm_name" "${c[base]}" "${vm_status:+  $vm_status}"
+    done
+}
+
+cmd_sandbox() {
+    [ $# -ge 1 ] || die "usage: vms sandbox add|rm|list"
+    local sub=$1
+    shift
+    case "$sub" in
+        add) cmd_sandbox_add "$@" ;;
+        rm) cmd_sandbox_rm "$@" ;;
+        list|ls) cmd_sandbox_list "$@" ;;
+        *) die "error: sandbox command '$sub' not found" ;;
+    esac
+}
+
 cmd_usage() {
 	cat <<-_EOF
 	Usage: vms COMMAND [ARGS...]
 	vms path:  $vms_path
 	Commands:
-	  vms start VM_NAME
-	    Start an existing virtual machine.
+	  vms start VM_NAME [QEMU_ARGS...]
+	    Start an existing virtual machine. Extra arguments are passed
+	    to qemu verbatim, e.g. -snapshot to discard disk writes on exit.
 	  vms stop VM_NAME
 	    Stop a running virtual machine.
 	  vms boot VM_NAME ISO_PATH
 	    Boot a virtual machine from a specific ISO file.
 	    - ISO_PATH: Path to the ISO file to boot from.
-	  vms create VM_NAME SIZE_OF_IMAGE
-	    Create a new virtual machine with SIZE (e.g., 50G).
-	    Optional flags -f and -o will be passed directly to 'qemu-img create'
-	    to specify image format and additional options.
+	  vms create VM_NAME SIZE_OF_IMAGE [QEMU_IMG_ARGS...]
+	    Create a new virtual machine with SIZE (e.g., 50G). Extra
+	    arguments are passed to 'qemu-img create' verbatim, e.g.
+	    -f qcow2 -o nocow=on.
 	  vms clone SOURCE_VM_NAME TARGET_VM_NAME
 	    clone an existing virtual machine to create a new one.
 	    this copies both the disk image and configuration file.
@@ -493,9 +708,25 @@ cmd_usage() {
 	  vms monitor VM_NAME
 	    Attach to a VM's QEMU monitor socket.
 	    Requires monitor=socket in the VM config and socat installed.
+	  vms console VM_NAME
+	    Attach to a VM's serial console socket.
+	    Requires serial=socket in the VM config and socat installed.
 	  vms edit [VM_NAME]
 	    Open the VM's config in \$EDITOR. If no VM_NAME is given,
 	    opens the global vms config instead.
+	  vms lock VM_NAME
+	    Turn a stopped VM into a read-only base for sandboxes.
+	    A base cannot be started; use 'unlock' to make it a VM again.
+	  vms unlock VM_NAME
+	    Turn a base back into an ordinary VM. 
+	  vms sandbox add BASE_NAME VM_NAME [QEMU_IMG_ARGS...]
+	    Create a sandbox: a qcow2 copy-on-write disk on top of the base
+	    image plus a copy of its config. Extra arguments are passed to
+	    'qemu-img create' verbatim, e.g. -o nocow=on.
+	  vms sandbox rm VM_NAME
+	    Delete a stopped sandbox. Ordinary VMs and bases are left alone.
+	  vms sandbox list
+	    List sandboxes with their base and running state.
 	  vms version
 	    Show version information.
 	Options:
@@ -509,7 +740,7 @@ cmd_version() {
 	===========================================
 	vms: a simple script to manage headless VMs
 	
-	                 v0.5.2
+	                 v0.6.0
 	
 	                 hozan23
 	          hozan23@karyontech.net
@@ -527,7 +758,7 @@ if [ -z "$1" ]; then
 fi
 
 case "$1" in
-    start|boot|create|list|ports|monitor|edit) initialize ;;
+    start|boot|create|list|ports|monitor|console|edit|lock|unlock|sandbox) initialize ;;
 esac
 
 case "$1" in
@@ -539,7 +770,11 @@ clone) shift;                   cmd_clone "$@" ;;
 list | ls) shift;               cmd_list "$@" ;;
 ports) shift;                   cmd_ports "$@" ;;
 monitor) shift;                 cmd_monitor "$@" ;;
+console) shift;                 cmd_console "$@" ;;
 edit) shift;                    cmd_edit "$@" ;;
+lock) shift;                    cmd_lock "$@" ;;
+unlock) shift;                  cmd_unlock "$@" ;;
+sandbox) shift;                 cmd_sandbox "$@" ;;
 help|-h|--help) shift;          cmd_usage "$@" ;;
 version|-v|--version) shift;    cmd_version "$@" ;;
 *)                              die "error: command $1 not found" ;;

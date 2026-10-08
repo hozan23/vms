@@ -1,6 +1,44 @@
 Changelog
 =========
 
+0.6.0 - 2026-10-08
+------------------
+Added:
+  - sandboxes: 'lock' turns a stopped VM into a read-only base and
+    'unlock' reverts it once no sandbox depends on it. 'sandbox add'
+    creates a sandbox with a qcow2 copy-on-write disk on top of a
+    base, 'sandbox rm' deletes a stopped one, 'sandbox list' shows
+    them. Extra 'sandbox add' arguments go to qemu-img verbatim.
+  - role and base config fields, managed by the commands above.
+  - 'list' shows whether a VM is a base or a sandbox.
+  - completions for the new subcommands.
+  - 'start' passes extra arguments to qemu verbatim, e.g. -snapshot.
+  - 'console' subcommand: attach to the serial console socket.
+    serial=socket maps to ~/vms/NAME/serial.sock like monitor=socket.
+  - kernel, initrd and append config fields for direct kernel boot,
+    e.g. with machine=microvm.
+  - nic is passed to -nic verbatim; port forwards are appended only
+    for user-mode networking, so nic=none and nic=user,restrict=on
+    work as typed.
+
+Changed:
+  - 'start' and 'boot' refuse to run a base.
+  - 'create' passes extra arguments to qemu-img verbatim and reads
+    the image format back with 'qemu-img info'.
+  - VM names are limited to letters, digits, dot, dash and underscore.
+  - 'clone' refuses a running source VM.
+  - new VMs are headless: display=none, monitor=socket,
+    serial=socket and daemonize=on. Existing configs are unaffected.
+    'boot' prints a hint when display=none.
+  - 'clone' of a base or sandbox yields a standalone ordinary VM.
+  - config files and the 'create' printout list keys in sorted order.
+
+Fixed:
+  - 'start' and 'boot' report "already running" instead of QEMU's
+    pid file lock error.
+  - 'stop' and 'list' treat a stale or empty pid file as not running.
+
+
 0.5.2 - 2026-09-18
 ------------------
 Added:
