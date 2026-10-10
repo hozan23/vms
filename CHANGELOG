@@ -1,6 +1,15 @@
 Changelog
 =========
 
+0.6.4 - 2026-10-10
+------------------
+Changed:
+  - the built-in defaults are only written into new configs by create;
+    they are no longer applied when a VM starts. A key missing from the
+    config passes nothing to QEMU, like an empty one. image and
+    image_format are required.
+
+
 0.6.3 - 2026-10-10
 ------------------
 Added:

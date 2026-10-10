@@ -102,35 +102,35 @@ Each VM has a config file at `~/vms/NAME/config` containing
 `key=value` lines. Default values:
 
 ```
-smp=<nproc>
-ram=12G
-cpu=host
 accel=kvm
-sandbox=
+append=
+audiodev=
+base=
+bios=/usr/share/qemu/bios.bin
+boot=menu=on
+chardev=
+cpu=host
+daemonize=on
+devices=
+display=none
+drive_opts=
+fsdev=
 image=image.img
 image_format=raw
-drive_opts=
-ports=10022:22 8080:80
-nic=user
-netdev=
-display=none
-monitor=socket
-serial=socket
-boot=menu=on
-bios=/usr/share/qemu/bios.bin
-machine=
-audiodev=
-kernel=
 initrd=
-append=
+kernel=
+machine=
+monitor=socket
+netdev=
+nic=user
 objects=
-fsdev=
-chardev=
-devices=
-virtfs=
-daemonize=on
+ports=10022:22 8080:80
+ram=12G
 role=
-base=
+sandbox=
+serial=socket
+smp=<nproc>
+virtfs=
 ```
 
 `role` and `base` are set by lock, unlock and sandbox. `nic`, `netdev`
