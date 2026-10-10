@@ -27,8 +27,13 @@ declare -A vm_config=(
     [serial]="socket"
     [ports]="10022:22 8080:80"
     [daemonize]="on"
+    # objects, fsdev, chardev, devices, virtfs: space-separated entries, each
+    # passed as -object, -fsdev, -chardev, -device or -virtfs verbatim
     [objects]=
+    [fsdev]=
+    [chardev]=
     [devices]=
+    [virtfs]=
     [bios]="/usr/share/qemu/bios.bin"
     [nic]="user"
     # netdev: backend for a virtio-net-device in devices, e.g. user,id=net0
@@ -263,14 +268,13 @@ run_qemu() {
         qemu_args+=("-$net" "$val")
     done
 
-    local object
-    for object in ${vm_config[objects]}; do
-        qemu_args+=(-object "${object}")
-    done
-
-    local device
-    for device in ${vm_config[devices]}; do
-        qemu_args+=(-device "${device}")
+    # backends first, then the devices that reference them
+    local key flag entry
+    for key in objects:-object fsdev:-fsdev chardev:-chardev devices:-device virtfs:-virtfs; do
+        flag=${key#*:}
+        for entry in ${vm_config[${key%%:*}]}; do
+            qemu_args+=("$flag" "$entry")
+        done
     done
 
     qemu-system-x86_64 "${qemu_args[@]}" "${@:1}"
@@ -756,7 +760,7 @@ cmd_version() {
 	===========================================
 	vms: a simple script to manage headless VMs
 	
-	                 v0.6.2
+	                 v0.6.3
 	
 	                 hozan23
 	          hozan23@karyontech.net

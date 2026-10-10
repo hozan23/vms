@@ -124,7 +124,10 @@ kernel=
 initrd=
 append=
 objects=
+fsdev=
+chardev=
 devices=
+virtfs=
 daemonize=on
 role=
 base=
@@ -155,6 +158,26 @@ from the guest use
 [passt](https://www.qemu.org/docs/master/system/devices/net.html#using-passt-as-the-user-mode-network-stack).
 `sandbox=on` enables QEMU's seccomp filter; it cannot be combined with
 `netdev=passt`, since the filter kills the passt process QEMU spawns.
+
+## Sharing a host directory
+
+Export a directory over 9p and mount it in the guest by its tag:
+
+```
+virtfs=local,path=/home/x/projects,mount_tag=projects,security_model=none
+```
+
+On the guest VM:
+
+```sh
+mount -t 9p -o trans=virtio,version=9p2000.L projects /home/x/projects
+```
+
+Or permanently, in `/etc/fstab` on the guest:
+
+```
+projects  /home/x/projects  9p  trans=virtio,version=9p2000.L,nofail,_netdev  0  0
+```
 
 ## Microvm
 
