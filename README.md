@@ -123,6 +123,7 @@ netdev=
 nic=user
 objects=
 ports=10022:22 8080:80
+ports_addr=127.0.0.1
 ram=12G
 role=
 sandbox=
@@ -133,7 +134,8 @@ virtfs=
 
 `role` and `base` are set by lock, unlock and sandbox. `nic`, `netdev`
 and `sandbox` go to QEMU verbatim; `ports` are appended to whichever
-of `nic` or `netdev` is user-mode or passt.
+of `nic` or `netdev` is user-mode or passt, listening on `ports_addr`;
+empty means all host interfaces.
 
 `ports` supports ranges. Both sides must have the same number of ports:
 
