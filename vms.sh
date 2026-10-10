@@ -49,6 +49,9 @@ declare -A vm_config=(
     [base]=""
 )
 
+# keys a VM config must set
+required_keys=(image image_format)
+
 declare -A qemu_flags=(
     [boot]=-boot
     [ram]=-m
@@ -148,7 +151,13 @@ check_vm_name() {
 load_vm_config() {
     vm_conf_path="$vms_path/$1/config"
     file_exists "$vm_conf_path"
+    vm_config=()
     load_config vm_config "$vm_conf_path"
+
+    local key
+    for key in "${required_keys[@]}"; do
+        [ -n "${vm_config[$key]}" ] || die "error: $key is not set in $vm_conf_path"
+    done
 }
 
 set_config() {
@@ -760,7 +769,7 @@ cmd_version() {
 	===========================================
 	vms: a simple script to manage headless VMs
 	
-	                 v0.6.3
+	                 v0.6.4
 	
 	                 hozan23
 	          hozan23@karyontech.net
