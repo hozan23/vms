@@ -11,6 +11,8 @@ declare -A config=()
 # Default vm configuration
 declare -A vm_config=(
     [accel]="kvm"
+    # sandbox: QEMU seccomp filter (-sandbox)
+    [sandbox]=""
     [boot]="menu=on"
     [ram]="12G"
     [cpu]="host"
@@ -29,6 +31,8 @@ declare -A vm_config=(
     [devices]=
     [bios]="/usr/share/qemu/bios.bin"
     [nic]="user"
+    # netdev: backend for a virtio-net-device in devices, e.g. user,id=net0
+    [netdev]=""
     [machine]=""
     [audiodev]=""
     [kernel]=""
@@ -47,6 +51,7 @@ declare -A qemu_flags=(
     [smp]=-smp
     [monitor]=-monitor
     [accel]=-accel
+    [sandbox]=-sandbox
     [bios]=-bios
     [machine]=-machine
     [audiodev]=-audiodev
@@ -176,6 +181,52 @@ refuse_base() {
     fi
 }
 
+# port_forwards FORMAT: print the ports field as netdev options, one per
+# forward. FORMAT is a printf pattern with host and guest port, e.g.
+# ",hostfwd=tcp::%s-:%s" for user-mode or ",tcp-ports=%s:%s" for passt
+port_forwards() {
+    local fmt=$1 ports p out=""
+    for ports in ${vm_config[ports]}; do
+        IFS=':' read -ra p <<<"$ports"
+        if [ ${#p[@]} != 2 ]; then
+            die "error: wrong port: ${p[*]}"
+        fi
+
+        local host="${p[0]}"
+        local guest="${p[1]}"
+
+        if [[ "$host" == *-* || "$guest" == *-* ]]; then
+            if [[ "$host" != *-* || "$guest" != *-* ]]; then
+                die "error: port range must be specified on both sides: $ports"
+            fi
+
+            local host_start=${host%-*}
+            local host_end=${host#*-}
+            local guest_start=${guest%-*}
+            local guest_end=${guest#*-}
+
+            if [ "$host_end" -lt "$host_start" ] || [ "$guest_end" -lt "$guest_start" ]; then
+                die "error: port range end before start: $ports"
+            fi
+
+            local host_count=$((host_end - host_start))
+            local guest_count=$((guest_end - guest_start))
+
+            if [ "$host_count" != "$guest_count" ]; then
+                die "error: port range mismatch: $ports"
+            fi
+
+            local i
+            for ((i = 0; i <= host_count; i++)); do
+                out+=$(printf "$fmt" "$((host_start + i))" "$((guest_start + i))")
+            done
+        else
+            out+=$(printf "$fmt" "$host" "$guest")
+        fi
+    done
+    printf "%s" "$out"
+}
+
 run_qemu() {
     local vm_path=$1
     shift
@@ -199,53 +250,18 @@ run_qemu() {
         qemu_args+=(-daemonize)
     fi
 
-    if [ -n "${vm_config[nic]}" ]; then
-        local qemu_net_arg="${vm_config[nic]}"
-        local ports p
-        # hostfwd is only valid for user-mode networking
-        if [[ "$qemu_net_arg" == user* ]]; then
-            for ports in ${vm_config[ports]}; do
-                IFS=':' read -ra p <<<"$ports"
-                if [ ${#p[@]} != 2 ]; then
-                    die "error: wrong port: ${p[*]}"
-                fi
-
-                local host="${p[0]}"
-                local guest="${p[1]}"
-
-                if [[ "$host" == *-* || "$guest" == *-* ]]; then
-                    if [[ "$host" != *-* || "$guest" != *-* ]]; then
-                        die "error: port range must be specified on both sides: $ports"
-                    fi
-
-                    local host_start=${host%-*}
-                    local host_end=${host#*-}
-                    local guest_start=${guest%-*}
-                    local guest_end=${guest#*-}
-
-                    if [ "$host_end" -lt "$host_start" ] || [ "$guest_end" -lt "$guest_start" ]; then
-                        die "error: port range end before start: $ports"
-                    fi
-
-                    local host_count=$((host_end - host_start))
-                    local guest_count=$((guest_end - guest_start))
-
-                    if [ "$host_count" != "$guest_count" ]; then
-                        die "error: port range mismatch: $ports"
-                    fi
-
-                    local i
-                    for ((i = 0; i <= host_count; i++)); do
-                        qemu_net_arg+=",hostfwd=tcp::$((host_start + i))-:$((guest_start + i))"
-                    done
-                else
-                    qemu_net_arg+=",hostfwd=tcp::${host}-:${guest}"
-                fi
-            done
-        fi
-
-        qemu_args+=(-nic "$qemu_net_arg")
-    fi
+    # nic and netdev are passed verbatim; the ports field is appended to
+    # whichever of them is a backend that forwards ports, in its own syntax
+    local net
+    for net in nic netdev; do
+        local val="${vm_config[$net]}"
+        [ -n "$val" ] || continue
+        case "$val" in
+            user*) val+=$(port_forwards ",hostfwd=tcp::%s-:%s") ;;
+            passt*) val+=$(port_forwards ",tcp-ports=%s:%s") ;;
+        esac
+        qemu_args+=("-$net" "$val")
+    done
 
     local object
     for object in ${vm_config[objects]}; do
@@ -740,7 +756,7 @@ cmd_version() {
 	===========================================
 	vms: a simple script to manage headless VMs
 	
-	                 v0.6.1
+	                 v0.6.2
 	
 	                 hozan23
 	          hozan23@karyontech.net

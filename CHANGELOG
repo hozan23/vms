@@ -1,6 +1,18 @@
 Changelog
 =========
 
+0.6.2 - 2026-10-10
+------------------
+Added:
+  - netdev config field, passed to -netdev verbatim, for machines where
+    -nic cannot create the device (e.g. microvm). The ports forwards are
+    appended to nic or netdev, whichever is user-mode or passt.
+
+Changed:
+  - sandbox config field mapped to -sandbox (QEMU seccomp), empty by
+    default. Not usable together with netdev=passt.
+
+
 0.6.1 - 2026-10-08
 ------------------
 Changed:
