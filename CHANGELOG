@@ -1,6 +1,14 @@
 Changelog
 =========
 
+0.6.5 - 2026-10-10
+------------------
+Added:
+  - ports_addr config field: the host address the ports forwards listen
+    on, for user-mode and passt networking. New configs get 127.0.0.1;
+    empty means all interfaces, as before.
+
+
 0.6.4 - 2026-10-10
 ------------------
 Changed:

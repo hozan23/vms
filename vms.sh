@@ -26,6 +26,8 @@ declare -A vm_config=(
     [monitor]="socket"
     [serial]="socket"
     [ports]="10022:22 8080:80"
+    # ports_addr: host address the forwards listen on; empty means all
+    [ports_addr]="127.0.0.1"
     [daemonize]="on"
     # objects, fsdev, chardev, devices, virtfs: space-separated entries, each
     # passed as -object, -fsdev, -chardev, -device or -virtfs verbatim
@@ -266,13 +268,20 @@ run_qemu() {
 
     # nic and netdev are passed verbatim; the ports field is appended to
     # whichever of them is a backend that forwards ports, in its own syntax
-    local net
+    local net fwd addr="${vm_config[ports_addr]}"
     for net in nic netdev; do
         local val="${vm_config[$net]}"
         [ -n "$val" ] || continue
         case "$val" in
-            user*) val+=$(port_forwards ",hostfwd=tcp::%s-:%s") ;;
-            passt*) val+=$(port_forwards ",tcp-ports=%s:%s") ;;
+            user*) val+=$(port_forwards ",hostfwd=tcp:$addr:%s-:%s") ;;
+            passt*)
+                # passt takes the listen address once, in front of the port list
+                fwd=$(port_forwards ",tcp-ports=%s:%s")
+                if [ -n "$addr" ]; then
+                    fwd=${fwd/,tcp-ports=/,tcp-ports=$addr\/}
+                fi
+                val+=$fwd
+                ;;
         esac
         qemu_args+=("-$net" "$val")
     done
@@ -769,7 +778,7 @@ cmd_version() {
 	===========================================
 	vms: a simple script to manage headless VMs
 	
-	                 v0.6.4
+	                 v0.6.5
 	
 	                 hozan23
 	          hozan23@karyontech.net
