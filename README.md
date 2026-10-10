@@ -106,11 +106,13 @@ smp=<nproc>
 ram=12G
 cpu=host
 accel=kvm
+sandbox=
 image=image.img
 image_format=raw
 drive_opts=
 ports=10022:22 8080:80
 nic=user
+netdev=
 display=none
 monitor=socket
 serial=socket
@@ -128,8 +130,9 @@ role=
 base=
 ```
 
-`role` and `base` are set by lock, unlock and sandbox. `nic` is passed
-to `-nic` verbatim; `ports` are appended only for user-mode networking.
+`role` and `base` are set by lock, unlock and sandbox. `nic`, `netdev`
+and `sandbox` go to QEMU verbatim; `ports` are appended to whichever
+of `nic` or `netdev` is user-mode or passt.
 
 ## Port ranges
 
@@ -143,6 +146,19 @@ ports=10022:22
 # range mapping: host 10022-10025 -> guest 22-25
 ports=10022-10025:22-25
 ```
+
+## Network isolation
+
+`nic=user` lets the guest reach the host and the internet.
+`nic=user,restrict=on` blocks both. For internet without host access
+from the guest use
+[passt](https://www.qemu.org/docs/master/system/devices/net.html#using-passt-as-the-user-mode-network-stack).
+`sandbox=on` enables QEMU's seccomp filter; it cannot be combined with
+`netdev=passt`, since the filter kills the passt process QEMU spawns.
+
+## Microvm
+
+You can also enable [QEMU microvm](https://www.qemu.org/docs/master/system/i386/microvm.html).
 
 ## Monitor and console
 
