@@ -1,9 +1,8 @@
 # vms - simple headless VM manager
 
-vms is a small bash script to manage multiple headless QEMU VMs
-without a graphical interface. It uses minimal QEMU arguments to
-avoid excessive CPU usage and is meant to be driven over ssh,
-sshfs, and rsync.
+vms is a small bash script to manage multiple headless QEMU VMs.
+Each VM has its own config file, which holds the QEMU options. A VM
+can be locked as a read-only base for disposable sandboxes.
 
 ## Requirements
 
@@ -36,15 +35,14 @@ qcow2 with nocow:
 vms create arch 50G -f qcow2 -o nocow=on
 ```
 
-Review or tweak the VM config in `$EDITOR` (or the global config
-if no name is given), then boot from an ISO:
+Review or tweak the VM config in `$EDITOR`, then boot from an ISO:
 
 ```sh
 vms edit arch
 vms boot arch ~/downloads/arch.iso
 ```
 
-Once installed, start and stop:
+Once installed, the VM is started and stopped with:
 
 ```sh
 vms start arch
@@ -91,10 +89,10 @@ vms sandbox rm task1
 vms sandbox list
 ```
 
-A sandbox is a normal VM otherwise. Extra `sandbox add` arguments
-go to qemu-img verbatim, e.g. `-o nocow=on`. `unlock` makes a base
-an ordinary VM again once it has no sandboxes. Do not modify a
-locked image by hand while sandboxes exist.
+`unlock` makes a base an ordinary VM again once it has no sandboxes.
+Do not modify a locked image by hand while sandboxes exist. A sandbox
+is a normal VM otherwise; extra `sandbox add` arguments go to qemu-img
+verbatim, e.g. `-o nocow=on`.
 
 ## Configuration
 
@@ -137,10 +135,7 @@ virtfs=
 and `sandbox` go to QEMU verbatim; `ports` are appended to whichever
 of `nic` or `netdev` is user-mode or passt.
 
-## Port ranges
-
-The `ports` field supports port ranges. Both sides must have the
-same number of ports.
+`ports` supports ranges. Both sides must have the same number of ports:
 
 ```
 # single port mapping
@@ -150,13 +145,21 @@ ports=10022:22
 ports=10022-10025:22-25
 ```
 
+## Monitor and console
+
+`monitor=socket` and `serial=socket` create `~/vms/NAME/monitor.sock` and
+`serial.sock`; `vms monitor` and `vms console` connect via socat. New
+VMs have `display=none`. Set `display=sdl` for a graphical installer.
+
 ## Network isolation
 
 `nic=user` lets the guest reach the host and the internet.
-`nic=user,restrict=on` blocks both. For internet without host access
-from the guest use
+`nic=user,restrict=on` blocks both.
+
+For internet without host access from the guest use
 [passt](https://www.qemu.org/docs/master/system/devices/net.html#using-passt-as-the-user-mode-network-stack).
-`sandbox=on` enables QEMU's seccomp filter; it cannot be combined with
+
+`sandbox=on` enables QEMU's seccomp filter. It cannot be combined with
 `netdev=passt`, since the filter kills the passt process QEMU spawns.
 
 ## Sharing a host directory
@@ -181,10 +184,5 @@ projects  /home/x/projects  9p  trans=virtio,version=9p2000.L,nofail,_netdev  0 
 
 ## Microvm
 
-You can also enable [QEMU microvm](https://www.qemu.org/docs/master/system/i386/microvm.html).
-
-## Monitor and console
-
-`monitor=socket` and `serial=socket` create `~/vms/NAME/monitor.sock` and
-`serial.sock`; `vms monitor` and `vms console` connect via socat. New
-VMs have `display=none`; set `display=sdl` for a graphical installer.
+[QEMU microvm](https://www.qemu.org/docs/master/system/i386/microvm.html)
+boots a kernel directly, without ACPI or PCI.
