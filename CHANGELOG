@@ -1,6 +1,13 @@
 Changelog
 =========
 
+0.7.1 - 2026-10-23
+------------------
+Fixed:
+  - the serial=socket chardev id is now vms-serial0 instead of serial0,
+    so it no longer clashes with a chardev named serial0 in the
+    chardev config field.
+
 0.7.0 - 2026-10-23
 ------------------
 Added:
