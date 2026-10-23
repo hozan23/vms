@@ -22,7 +22,9 @@ _vms_by_role() {
 _vms_commands() {
     local -a cmds=(
         'start:start a VM'
-        'stop:stop a running VM'
+        'stop:power off a running VM'
+        'status:show whether a VM is running'
+        'log:show the serial log of a VM'
         'boot:boot a VM from an ISO'
         'create:create a new VM'
         'clone:clone an existing VM'
@@ -62,7 +64,10 @@ _vms() {
     [[ $state == args ]] || return
 
     case $line[1] in
-        start|stop|monitor|console|edit|lock|unlock)
+        stop)
+            _arguments '-f[kill right away]' ':vm:_vms_names'
+            ;;
+        start|status|log|monitor|console|edit|lock|unlock)
             _arguments ':vm:_vms_names'
             ;;
         clone)

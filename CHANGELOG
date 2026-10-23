@@ -1,6 +1,29 @@
 Changelog
 =========
 
+0.7.0 - 2026-10-23
+------------------
+Added:
+  - 'status' subcommand: prints whether a VM is running, exits 1 when
+    it is stopped.
+  - 'log' subcommand: tail the serial log. serial=socket now writes
+    ~/vms/NAME/serial.log, truncated on every start. Extra arguments
+    go to tail verbatim.
+  - arch config field: selects qemu-system-ARCH, x86_64 when unset.
+  - 'boot' passes extra arguments to qemu verbatim, like 'start'.
+  - VMs are started with -name set to the VM name.
+
+Changed:
+  - 'stop' powers the guest off over the monitor socket and kills it
+    after 60 seconds, or right away when there is no monitor socket.
+    'stop -f' kills it at once. The pid file is removed once QEMU has
+    exited; if it is still running 10 seconds after SIGTERM, 'stop'
+    fails and leaves it alone.
+
+Fixed:
+  - a stale pid file pointing at a reused PID no longer counts as a
+    running VM, so 'stop' cannot kill an unrelated process.
+
 0.6.5 - 2026-10-10
 ------------------
 Added:
