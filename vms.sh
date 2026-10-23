@@ -279,8 +279,8 @@ run_qemu() {
                 monitor:socket) val="unix:$vm_path/monitor.sock,server,nowait" ;;
                 serial:socket)
                     # the serial log is truncated on every start
-                    qemu_args+=(-chardev "socket,id=serial0,path=$vm_path/serial.sock,server=on,wait=off,logfile=$vm_path/serial.log,logappend=off")
-                    val="chardev:serial0"
+                    qemu_args+=(-chardev "socket,id=vms-serial0,path=$vm_path/serial.sock,server=on,wait=off,logfile=$vm_path/serial.log,logappend=off")
+                    val="chardev:vms-serial0"
                     ;;
             esac
             qemu_args+=("${qemu_flags[$key]}" "$val")
@@ -856,7 +856,7 @@ cmd_version() {
 	===========================================
 	vms: a simple script to manage headless VMs
 	
-	                 v0.7.0
+	                 v0.7.1
 	
 	                 hozan23
 	          hozan23@karyontech.net
