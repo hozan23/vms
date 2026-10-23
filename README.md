@@ -6,9 +6,11 @@ can be locked as a read-only base for disposable sandboxes.
 
 ## Requirements
 
-`qemu-img` and `qemu-system-x86_64`.
+`qemu-img` and `qemu-system-x86_64`, or the `qemu-system-*` matching
+the VM's `arch`.
 
-Optional: `socat`, to use `vms monitor` and `vms console`.
+Optional: `socat`, to use `vms monitor`, `vms console` and a graceful
+`vms stop`.
 
 ## Installation
 
@@ -47,6 +49,7 @@ Once installed, the VM is started and stopped with:
 ```sh
 vms start arch
 vms stop arch
+vms status arch
 ```
 
 Extra arguments go to qemu, e.g. discard disk writes on exit:
@@ -54,6 +57,8 @@ Extra arguments go to qemu, e.g. discard disk writes on exit:
 ```sh
 vms start arch -snapshot
 ```
+
+`boot` passes extra arguments to qemu the same way.
 
 List all VMs, or just their port mappings:
 
@@ -102,6 +107,7 @@ Each VM has a config file at `~/vms/NAME/config` containing
 ```
 accel=kvm
 append=
+arch=x86_64
 audiodev=
 base=
 bios=/usr/share/qemu/bios.bin
@@ -132,6 +138,8 @@ smp=<nproc>
 virtfs=
 ```
 
+`arch` selects `qemu-system-ARCH` a config without it uses x86_64.
+
 `role` and `base` are set by lock, unlock and sandbox. `nic`, `netdev`
 and `sandbox` go to QEMU verbatim; `ports` are appended to whichever
 of `nic` or `netdev` is user-mode or passt, listening on `ports_addr`;
@@ -152,6 +160,15 @@ ports=10022-10025:22-25
 `monitor=socket` and `serial=socket` create `~/vms/NAME/monitor.sock` and
 `serial.sock`; `vms monitor` and `vms console` connect via socat. New
 VMs have `display=none`. Set `display=sdl` for a graphical installer.
+
+`serial=socket` also writes the serial output to `~/vms/NAME/serial.log`.
+The file is truncated each time the VM starts, so it only holds the
+current boot. Read it with `tail`:
+
+```sh
+vms log arch
+vms log arch -f
+```
 
 ## Network isolation
 

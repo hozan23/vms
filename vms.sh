@@ -4,12 +4,16 @@ set -e
 
 vms_path=$(realpath ~/vms)
 config_path="${vms_path}/config"
+# seconds 'stop' waits for the guest to power off before killing it
+stop_timeout=60
 
 # Default configuration
 declare -A config=()
 
 # Default vm configuration
 declare -A vm_config=(
+    # arch: picks qemu-system-ARCH, x86_64 when unset
+    [arch]="x86_64"
     [accel]="kvm"
     # sandbox: QEMU seccomp filter (-sandbox)
     [sandbox]=""
@@ -23,6 +27,7 @@ declare -A vm_config=(
     # display: none, sdl, gtk, curses, etc.
     [display]="none"
     # monitor/serial: socket (a unix socket in ~/vms/NAME/), stdio, none, etc.
+    # serial=socket also logs the current boot to ~/vms/NAME/serial.log
     [monitor]="socket"
     [serial]="socket"
     [ports]="10022:22 8080:80"
@@ -87,11 +92,9 @@ initialize() {
         save_config config "$config_path" 
     fi
 
-    for cmd in qemu-img qemu-system-x86_64; do
-        if ! command -v "$cmd" &>/dev/null; then
-            die "error: $cmd is not installed"
-        fi
-    done
+    if ! command -v qemu-img &>/dev/null; then
+        die "error: qemu-img is not installed"
+    fi
 }
 
 load_config() {
@@ -176,7 +179,19 @@ vm_running() {
     local pid_file="$vms_path/$1/pid" pid
     [ -f "$pid_file" ] || return 1
     pid=$(cat "$pid_file")
-    [ -n "$pid" ] && [ -d "/proc/$pid" ]
+    [ -n "$pid" ] || return 1
+    # a stale pid file can point at a reused PID, so check it is this VM's QEMU
+    grep -qzxF -- "$pid_file" "/proc/$pid/cmdline" 2>/dev/null
+}
+
+# wait_exit NAME SECONDS: wait up to SECONDS for a VM to exit
+wait_exit() {
+    local i
+    for ((i = 0; i < $2; i++)); do
+        vm_running "$1" || return 0
+        sleep 1
+    done
+    ! vm_running "$1"
 }
 
 sandboxes_of() {
@@ -246,9 +261,14 @@ port_forwards() {
 run_qemu() {
     local vm_path=$1
     shift
+    local qemu="qemu-system-${vm_config[arch]:-x86_64}"
+    if ! command -v "$qemu" &>/dev/null; then
+        die "error: $qemu is not installed"
+    fi
     # Define the QEMU arguments
     local qemu_args=(
         -pidfile "$vm_path/pid"
+        -name "$(basename "$vm_path")"
     )
 
     local key
@@ -256,7 +276,12 @@ run_qemu() {
         if [ -n "${vm_config[$key]}" ]; then
             local val="${vm_config[$key]}"
             case "$key:$val" in
-                monitor:socket|serial:socket) val="unix:$vm_path/$key.sock,server,nowait" ;;
+                monitor:socket) val="unix:$vm_path/monitor.sock,server,nowait" ;;
+                serial:socket)
+                    # the serial log is truncated on every start
+                    qemu_args+=(-chardev "socket,id=serial0,path=$vm_path/serial.sock,server=on,wait=off,logfile=$vm_path/serial.log,logappend=off")
+                    val="chardev:serial0"
+                    ;;
             esac
             qemu_args+=("${qemu_flags[$key]}" "$val")
         fi
@@ -295,7 +320,7 @@ run_qemu() {
         done
     done
 
-    qemu-system-x86_64 "${qemu_args[@]}" "${@:1}"
+    "$qemu" "${qemu_args[@]}" "${@:1}"
 }
 
 create_new_vm() {
@@ -363,17 +388,60 @@ cmd_start() {
 }
 
 cmd_stop() {
+    local force=""
+    if [ "$1" = "-f" ]; then
+        force=1
+        shift
+    fi
     check_params $# 1
     check_vm_name "$1"
 
     local vm_name=$1
-    local pid_path="$vms_path/$vm_name/pid"
+    local vm_path="$vms_path/$vm_name"
+    local sock="$vm_path/monitor.sock"
+
+    vm_running "$vm_name" || die "$vm_name is not running"
+    local pid=$(cat "$vm_path/pid")
+
+    # ask the guest to power off over the monitor, kill it when there is
+    # no monitor socket or it is still up after stop_timeout seconds
+    if [ -z "$force" ] && [ -S "$sock" ] && command -v socat &>/dev/null; then
+        printf "system_powerdown\n" | socat - "UNIX-CONNECT:$sock" >/dev/null || true
+        wait_exit "$vm_name" "$stop_timeout" || true
+    fi
 
     if vm_running "$vm_name"; then
-        kill "$(cat "$pid_path")"
-    else
-        die "$vm_name is not running"
+        [ -n "$force" ] || printf "note: killing '%s'\n" "$vm_name" >&2
+        kill "$pid"
+        wait_exit "$vm_name" 10 || die "error: '$vm_name' did not exit after SIGTERM (PID $pid)"
     fi
+    rm -f "$vm_path/pid"
+}
+
+cmd_status() {
+    check_params $# 1
+    check_vm_name "$1"
+
+    [ -d "$vms_path/$1" ] || die "error: VM '$1' does not exist"
+    if vm_running "$1"; then
+        printf "running (PID %s)\n" "$(cat "$vms_path/$1/pid")"
+    else
+        printf "stopped\n"
+        exit 1
+    fi
+}
+
+cmd_log() {
+    check_params $# 1
+    check_vm_name "$1"
+
+    local log="$vms_path/$1/serial.log"
+    shift
+    if [ ! -f "$log" ]; then
+        die "error: no serial log at $log (is the VM started with serial=socket?)"
+    fi
+    # remaining arguments go to tail verbatim, e.g. -f or -n 200
+    exec tail "$@" "$log"
 }
 
 
@@ -384,6 +452,7 @@ cmd_boot() {
     local vm_name=$1
     local iso_path=$(realpath "$2")
     local vm_path="$vms_path/$vm_name"
+    shift 2
 
     load_vm_config "$vm_name"
 
@@ -405,7 +474,8 @@ cmd_boot() {
         -cdrom "$iso_path"
     )
 
-    run_qemu "$vm_path" "${img_args[@]}"
+    # remaining arguments go to qemu verbatim
+    run_qemu "$vm_path" "${img_args[@]}" "$@"
 }
 
 cmd_create() {
@@ -726,11 +796,16 @@ cmd_usage() {
 	  vms start VM_NAME [QEMU_ARGS...]
 	    Start an existing virtual machine. Extra arguments are passed
 	    to qemu verbatim, e.g. -snapshot to discard disk writes on exit.
-	  vms stop VM_NAME
-	    Stop a running virtual machine.
-	  vms boot VM_NAME ISO_PATH
+	  vms stop [-f] VM_NAME
+	    Power off a running virtual machine over its monitor socket,
+	    killing it after ${stop_timeout}s or when there is no socket.
+	    -f kills it right away.
+	  vms status VM_NAME
+	    Print whether a VM is running; exits 1 when it is stopped.
+	  vms boot VM_NAME ISO_PATH [QEMU_ARGS...]
 	    Boot a virtual machine from a specific ISO file.
 	    - ISO_PATH: Path to the ISO file to boot from.
+	    Extra arguments are passed to qemu verbatim.
 	  vms create VM_NAME SIZE_OF_IMAGE [QEMU_IMG_ARGS...]
 	    Create a new virtual machine with SIZE (e.g., 50G). Extra
 	    arguments are passed to 'qemu-img create' verbatim, e.g.
@@ -749,6 +824,9 @@ cmd_usage() {
 	  vms console VM_NAME
 	    Attach to a VM's serial console socket.
 	    Requires serial=socket in the VM config and socat installed.
+	  vms log VM_NAME [TAIL_ARGS...]
+	    Show the serial log of the current boot with tail. Extra
+	    arguments go to tail verbatim, e.g. -f. Requires serial=socket.
 	  vms edit [VM_NAME]
 	    Open the VM's config in \$EDITOR. If no VM_NAME is given,
 	    opens the global vms config instead.
@@ -778,7 +856,7 @@ cmd_version() {
 	===========================================
 	vms: a simple script to manage headless VMs
 	
-	                 v0.6.5
+	                 v0.7.0
 	
 	                 hozan23
 	          hozan23@karyontech.net
@@ -802,6 +880,8 @@ esac
 case "$1" in
 start) shift;                   cmd_start "$@" ;;
 stop) shift;                    cmd_stop "$@" ;;
+status) shift;                  cmd_status "$@" ;;
+log) shift;                     cmd_log "$@" ;;
 boot) shift;                    cmd_boot "$@" ;;
 create) shift;                  cmd_create "$@" ;;
 clone) shift;                   cmd_clone "$@" ;;

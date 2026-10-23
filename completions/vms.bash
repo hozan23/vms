@@ -3,7 +3,7 @@ _vms() {
     cur="${COMP_WORDS[COMP_CWORD]}"
     prev="${COMP_WORDS[COMP_CWORD-1]}"
 
-    local subcommands="start stop boot create clone list ls ports monitor console edit lock unlock sandbox help version"
+    local subcommands="start stop status log boot create clone list ls ports monitor console edit lock unlock sandbox help version"
     local sandbox_cmds="add rm list ls"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
@@ -32,7 +32,14 @@ _vms() {
     }
 
     case "$subcmd" in
-        start|stop|clone|monitor|console|lock|unlock)
+        stop)
+            if [ "$COMP_CWORD" -eq 2 ]; then
+                COMPREPLY=($(compgen -W "-f $(_vms_names)" -- "$cur"))
+            elif [ "$COMP_CWORD" -eq 3 ] && [ "$prev" = "-f" ]; then
+                COMPREPLY=($(compgen -W "$(_vms_names)" -- "$cur"))
+            fi
+            ;;
+        start|status|log|clone|monitor|console|lock|unlock)
             if [ "$COMP_CWORD" -eq 2 ]; then
                 COMPREPLY=($(compgen -W "$(_vms_names)" -- "$cur"))
             fi
