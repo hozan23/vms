@@ -1,3 +1,21 @@
+# _vms_names: names of all VMs
+_vms_names() {
+    local names="" d
+    for d in "$HOME"/vms/*/; do
+        [ -f "${d}config" ] && names+=" $(basename "$d")"
+    done
+    printf '%s' "$names"
+}
+
+# _vms_by_role ROLE: names of VMs whose config has role=ROLE
+_vms_by_role() {
+    local names="" d
+    for d in "$HOME"/vms/*/; do
+        grep -qx "role=$1" "${d}config" 2>/dev/null && names+=" $(basename "$d")"
+    done
+    printf '%s' "$names"
+}
+
 _vms() {
     local cur prev
     cur="${COMP_WORDS[COMP_CWORD]}"
@@ -12,24 +30,6 @@ _vms() {
     fi
 
     local subcmd="${COMP_WORDS[1]}"
-    local vms_dir="${HOME}/vms"
-
-    _vms_names() {
-        local names="" d
-        for d in "$vms_dir"/*/; do
-            [ -f "${d}config" ] && names+=" $(basename "$d")"
-        done
-        printf '%s' "$names"
-    }
-
-    # _vms_by_role ROLE: names of VMs whose config has role=ROLE
-    _vms_by_role() {
-        local names="" d
-        for d in "$vms_dir"/*/; do
-            grep -qx "role=$1" "${d}config" 2>/dev/null && names+=" $(basename "$d")"
-        done
-        printf '%s' "$names"
-    }
 
     case "$subcmd" in
         stop)

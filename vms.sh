@@ -2,6 +2,9 @@
 
 set -e
 
+# namerefs (local -n) need bash 4.3
+((BASH_VERSINFO[0] > 4 || (BASH_VERSINFO[0] == 4 && BASH_VERSINFO[1] >= 3))) || { printf "vms: bash 4.3 or later is required\n" >&2; exit 1; }
+
 vms_path=$(realpath ~/vms)
 config_path="${vms_path}/config"
 
@@ -133,20 +136,25 @@ save_config() {
     if [ -n "$section" ]; then
         printf "[%s]\n" "$section" >>"$file"
     fi
-    for key in $(printf "%s\n" "${!conf[@]}" | sort); do
+    local -a keys
+    mapfile -t keys < <(printf "%s\n" "${!conf[@]}" | sort)
+    for key in "${keys[@]}"; do
         printf "%s=%s\n" "$key" "${conf[$key]}" >>"$file"
     done
 }
 
 print_config() {
     local -n conf=$1
-    for k in $(printf "%s\n" "${!conf[@]}" | sort); do
+    local -a keys
+    local k
+    mapfile -t keys < <(printf "%s\n" "${!conf[@]}" | sort)
+    for k in "${keys[@]}"; do
         printf "%s=%s\n" "$k" "${conf[$k]}"
     done
 }
 
 die() {
-    echo "$@" >&2
+    printf "%s\n" "$*" >&2
     exit 1
 }
 
@@ -164,7 +172,8 @@ check_params() {
 
 check_vm_name() {
     case "$1" in
-        ""|.|..) die "error: invalid VM name '$1'" ;;
+        # a leading - would be read as an option, e.g. 'stop -f'
+        ""|.|..|-*) die "error: invalid VM name '$1'" ;;
     esac
     [[ "$1" =~ ^[A-Za-z0-9._-]+$ ]] || die "error: invalid VM name '$1'"
 }
@@ -218,7 +227,7 @@ set_config() {
 vm_running() {
     local pid_file="$vms_path/$1/pid" pid
     [ -f "$pid_file" ] || return 1
-    pid=$(cat "$pid_file")
+    pid=$(<"$pid_file")
     [ -n "$pid" ] || return 1
     # a stale pid file can point at a reused PID, so check it is this VM's QEMU
     grep -qzxF -- "$pid_file" "/proc/$pid/cmdline" 2>/dev/null
@@ -256,27 +265,33 @@ refuse_base() {
 # forward. FORMAT is a printf pattern with host and guest port, e.g.
 # ",hostfwd=tcp::%s-:%s" for user-mode or ",tcp-ports=%s:%s" for passt
 port_forwards() {
-    local fmt=$1 ports p out=""
-    for ports in ${vm_config[ports]}; do
+    local fmt=$1 ports p list fwd out=""
+    read -ra list <<<"${vm_config[ports]}"
+    for ports in "${list[@]}"; do
         IFS=':' read -ra p <<<"$ports"
         if [ ${#p[@]} != 2 ]; then
-            die "error: wrong port: ${p[*]}"
+            die "error: wrong port: $ports"
         fi
 
         local host="${p[0]}"
         local guest="${p[1]}"
+        # a port or a range of ports on each side
+        if [[ ! $host =~ ^[0-9]+(-[0-9]+)?$ || ! $guest =~ ^[0-9]+(-[0-9]+)?$ ]]; then
+            die "error: wrong port: $ports"
+        fi
 
         if [[ "$host" == *-* || "$guest" == *-* ]]; then
             if [[ "$host" != *-* || "$guest" != *-* ]]; then
                 die "error: port range must be specified on both sides: $ports"
             fi
 
-            local host_start=${host%-*}
-            local host_end=${host#*-}
-            local guest_start=${guest%-*}
-            local guest_end=${guest#*-}
+            # 10# so a leading zero is not read as octal
+            local host_start=$((10#${host%-*}))
+            local host_end=$((10#${host#*-}))
+            local guest_start=$((10#${guest%-*}))
+            local guest_end=$((10#${guest#*-}))
 
-            if [ "$host_end" -lt "$host_start" ] || [ "$guest_end" -lt "$guest_start" ]; then
+            if ((host_end < host_start || guest_end < guest_start)); then
                 die "error: port range end before start: $ports"
             fi
 
@@ -289,10 +304,12 @@ port_forwards() {
 
             local i
             for ((i = 0; i <= host_count; i++)); do
-                out+=$(printf "$fmt" "$((host_start + i))" "$((guest_start + i))")
+                printf -v fwd "$fmt" "$((host_start + i))" "$((guest_start + i))"
+                out+=$fwd
             done
         else
-            out+=$(printf "$fmt" "$host" "$guest")
+            printf -v fwd "$fmt" "$((10#$host))" "$((10#$guest))"
+            out+=$fwd
         fi
     done
     printf "%s" "$out"
@@ -352,15 +369,16 @@ run_qemu() {
     done
 
     # backends first, then the devices that reference them
-    local key flag entry
+    local key flag entry entries
     for key in objects:-object fsdev:-fsdev chardev:-chardev devices:-device virtfs:-virtfs; do
         flag=${key#*:}
-        for entry in ${vm_config[${key%%:*}]}; do
+        read -ra entries <<<"${vm_config[${key%%:*}]}"
+        for entry in "${entries[@]}"; do
             qemu_args+=("$flag" "$entry")
         done
     done
 
-    "$qemu" "${qemu_args[@]}" "${@:1}"
+    "$qemu" "${qemu_args[@]}" "$@"
 }
 
 create_new_vm() {
@@ -418,7 +436,7 @@ cmd_start() {
     load_vm_config "$vm_name"
 
     if vm_running "$vm_name"; then
-        die "error: '$vm_name' is already running (PID $(cat "$vm_path/pid"))"
+        die "error: '$vm_name' is already running (PID $(<"$vm_path/pid"))"
     fi
     refuse_base "$vm_name"
 
@@ -449,13 +467,13 @@ cmd_stop() {
 
     vm_running "$vm_name" || die "$vm_name is not running"
     local pid
-    pid=$(cat "$vm_path/pid")
+    pid=$(<"$vm_path/pid")
 
     # ask the guest to power off over the monitor, kill it when there is
     # no monitor socket or it is still up after stop_timeout seconds
     if [ -z "$force" ] && [ -S "$sock" ] && command -v socat &>/dev/null; then
         printf "system_powerdown\n" | socat - "UNIX-CONNECT:$sock" >/dev/null || true
-        wait_exit "$vm_name" "${config[stop_timeout]}" || true
+        wait_exit "$vm_name" "$((10#${config[stop_timeout]}))" || true
     fi
 
     if vm_running "$vm_name"; then
@@ -472,7 +490,7 @@ cmd_status() {
 
     [ -d "$vms_path/$1" ] || die "error: VM '$1' does not exist"
     if vm_running "$1"; then
-        printf "running (PID %s)\n" "$(cat "$vms_path/$1/pid")"
+        printf "running (PID %s)\n" "$(<"$vms_path/$1/pid")"
     else
         printf "stopped\n"
         exit 1
@@ -506,7 +524,7 @@ cmd_boot() {
     load_vm_config "$vm_name"
 
     if vm_running "$vm_name"; then
-        die "error: '$vm_name' is already running (PID $(cat "$vm_path/pid"))"
+        die "error: '$vm_name' is already running (PID $(<"$vm_path/pid"))"
     fi
     refuse_base "$vm_name"
 
@@ -641,7 +659,7 @@ cmd_list() {
         local pid_file="$vm_path/pid"
         if vm_running "$vm_name"; then
             local pid
-            pid=$(cat "$pid_file")
+            pid=$(<"$pid_file")
             local uptime=""
             if [ -f "/proc/$pid/stat" ]; then
                 # empty when the VM exits meanwhile: uptime shows unknown
@@ -651,7 +669,7 @@ cmd_list() {
                 if [ -n "$starttime" ] && [ -n "$boot_time" ]; then
                     local start_seconds=$((boot_time + starttime / 100))
                     local current_seconds
-                    current_seconds=$(date +%s)
+                    printf -v current_seconds '%(%s)T' -1
                     local uptime_seconds=$((current_seconds - start_seconds))
 
                     local days=$((uptime_seconds/86400))
@@ -659,7 +677,7 @@ cmd_list() {
                     local minutes=$((uptime_seconds%3600/60))
                     local seconds=$((uptime_seconds%60))
 
-                    uptime=$(printf "%dd %02d:%02d:%02d" "$days" "$hours" "$minutes" "$seconds")
+                    printf -v uptime "%dd %02d:%02d:%02d" "$days" "$hours" "$minutes" "$seconds"
 
                 fi
             fi
@@ -919,7 +937,7 @@ cmd_version() {
 	===========================================
 	vms: a simple script to manage headless VMs
 	
-	                 v0.8.0
+	                 v0.8.1
 	
 	                 hozan23
 	          hozan23@karyontech.net
