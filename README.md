@@ -163,7 +163,7 @@ ports=10022-10025:22-25
 ## Global config
 
 `~/vms/config` (`vms edit`) is split into sections. `[vm]` holds the
-defaults for new VMs and `[global]` holds the settings of vms itself.
+defaults for new VMs and `[global]` holds the settings of `vms` itself.
 The file is created on the first run with `stop_timeout` in
 `[global]` and nothing in `[vm]`. For example:
 
