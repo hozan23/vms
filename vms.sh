@@ -40,11 +40,11 @@ declare -A vm_config=(
     [daemonize]="on"
     # objects, fsdev, chardev, devices, virtfs: space-separated entries, each
     # passed as -object, -fsdev, -chardev, -device or -virtfs verbatim
-    [objects]=
-    [fsdev]=
-    [chardev]=
-    [devices]=
-    [virtfs]=
+    [objects]=""
+    [fsdev]=""
+    [chardev]=""
+    [devices]=""
+    [virtfs]=""
     [bios]="/usr/share/qemu/bios.bin"
     [nic]="user"
     # netdev: backend for a virtio-net-device in devices, e.g. user,id=net0
@@ -448,7 +448,8 @@ cmd_stop() {
     local sock="$vm_path/monitor.sock"
 
     vm_running "$vm_name" || die "$vm_name is not running"
-    local pid=$(cat "$vm_path/pid")
+    local pid
+    pid=$(cat "$vm_path/pid")
 
     # ask the guest to power off over the monitor, kill it when there is
     # no monitor socket or it is still up after stop_timeout seconds
@@ -497,7 +498,8 @@ cmd_boot() {
     check_vm_name "$1"
 
     local vm_name=$1
-    local iso_path=$(realpath "$2")
+    local iso_path
+    iso_path=$(realpath "$2")
     local vm_path="$vms_path/$vm_name"
     shift 2
 
@@ -632,19 +634,24 @@ cmd_edit() {
 cmd_list() {
     for conf in "$vms_path"/*/config; do
         [ -f "$conf" ] || continue
-        local vm_path=$(dirname "$conf")
-        local vm_name=$(basename "$vm_path")
+        local vm_path vm_name
+        vm_path=$(dirname "$conf")
+        vm_name=$(basename "$vm_path")
         local vm_status=""
         local pid_file="$vm_path/pid"
         if vm_running "$vm_name"; then
-            local pid=$(cat "$pid_file")
+            local pid
+            pid=$(cat "$pid_file")
             local uptime=""
             if [ -f "/proc/$pid/stat" ]; then
-                local starttime=$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null)
-                local boot_time=$(awk '/btime/ {print $2}' /proc/stat 2>/dev/null)
+                # empty when the VM exits meanwhile: uptime shows unknown
+                local starttime boot_time
+                starttime=$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null) || true
+                boot_time=$(awk '/btime/ {print $2}' /proc/stat 2>/dev/null) || true
                 if [ -n "$starttime" ] && [ -n "$boot_time" ]; then
                     local start_seconds=$((boot_time + starttime / 100))
-                    local current_seconds=$(date +%s)
+                    local current_seconds
+                    current_seconds=$(date +%s)
                     local uptime_seconds=$((current_seconds - start_seconds))
 
                     local days=$((uptime_seconds/86400))
@@ -684,8 +691,9 @@ cmd_console() {
 cmd_ports() {
     for conf in "$vms_path"/*/config; do
         [ -f "$conf" ] || continue
-        local vm_path=$(dirname "$conf")
-        local vm_name=$(basename "$vm_path")
+        local vm_path vm_name
+        vm_path=$(dirname "$conf")
+        vm_name=$(basename "$vm_path")
         local -A conf_data=()
         load_config conf_data "$conf"
         printf " - %-20s %s\n" "$vm_name" "${conf_data[ports]:-(none)}"
@@ -821,7 +829,8 @@ cmd_sandbox_list() {
         local -A c=()
         load_config c "$conf"
         [ "${c[role]}" = "sandbox" ] || continue
-        local vm_name=$(basename "$(dirname "$conf")")
+        local vm_name
+        vm_name=$(basename "$(dirname "$conf")")
         local vm_status=""
         if vm_running "$vm_name"; then
             vm_status="RUNNING"

@@ -7,7 +7,7 @@ _vms() {
     local sandbox_cmds="add rm list ls"
 
     if [ "$COMP_CWORD" -eq 1 ]; then
-        COMPREPLY=($(compgen -W "$subcommands" -- "$cur"))
+        mapfile -t COMPREPLY < <(compgen -W "$subcommands" -- "$cur")
         return
     fi
 
@@ -34,35 +34,37 @@ _vms() {
     case "$subcmd" in
         stop)
             if [ "$COMP_CWORD" -eq 2 ]; then
-                COMPREPLY=($(compgen -W "-f $(_vms_names)" -- "$cur"))
+                mapfile -t COMPREPLY < <(compgen -W "-f $(_vms_names)" -- "$cur")
             elif [ "$COMP_CWORD" -eq 3 ] && [ "$prev" = "-f" ]; then
-                COMPREPLY=($(compgen -W "$(_vms_names)" -- "$cur"))
+                mapfile -t COMPREPLY < <(compgen -W "$(_vms_names)" -- "$cur")
             fi
             ;;
         start|status|log|clone|monitor|console|lock|unlock)
             if [ "$COMP_CWORD" -eq 2 ]; then
-                COMPREPLY=($(compgen -W "$(_vms_names)" -- "$cur"))
+                mapfile -t COMPREPLY < <(compgen -W "$(_vms_names)" -- "$cur")
             fi
             ;;
         boot)
             if [ "$COMP_CWORD" -eq 2 ]; then
-                COMPREPLY=($(compgen -W "$(_vms_names)" -- "$cur"))
+                mapfile -t COMPREPLY < <(compgen -W "$(_vms_names)" -- "$cur")
             elif [ "$COMP_CWORD" -eq 3 ]; then
-                COMPREPLY=($(compgen -f -X '!*.iso' -- "$cur"))
+                # -X drops directories too, so add them back to walk into them
+                compopt -o filenames
+                mapfile -t COMPREPLY < <(compgen -f -X '!*.iso' -- "$cur"; compgen -d -- "$cur")
             fi
             ;;
         edit)
             if [ "$COMP_CWORD" -eq 2 ]; then
-                COMPREPLY=($(compgen -W "$(_vms_names)" -- "$cur"))
+                mapfile -t COMPREPLY < <(compgen -W "$(_vms_names)" -- "$cur")
             fi
             ;;
         sandbox)
             if [ "$COMP_CWORD" -eq 2 ]; then
-                COMPREPLY=($(compgen -W "$sandbox_cmds" -- "$cur"))
+                mapfile -t COMPREPLY < <(compgen -W "$sandbox_cmds" -- "$cur")
             elif [ "$COMP_CWORD" -eq 3 ]; then
                 case "${COMP_WORDS[2]}" in
-                    add) COMPREPLY=($(compgen -W "$(_vms_by_role base)" -- "$cur")) ;;
-                    rm) COMPREPLY=($(compgen -W "$(_vms_by_role sandbox)" -- "$cur")) ;;
+                    add) mapfile -t COMPREPLY < <(compgen -W "$(_vms_by_role base)" -- "$cur") ;;
+                    rm) mapfile -t COMPREPLY < <(compgen -W "$(_vms_by_role sandbox)" -- "$cur") ;;
                 esac
             fi
             ;;
