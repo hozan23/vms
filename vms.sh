@@ -4,11 +4,13 @@ set -e
 
 vms_path=$(realpath ~/vms)
 config_path="${vms_path}/config"
-# seconds 'stop' waits for the guest to power off before killing it
-stop_timeout=60
 
 # Default configuration
-declare -A config=()
+declare -A config=(
+    # stop_timeout: seconds 'stop' waits for the guest to power off before
+    # killing it
+    [stop_timeout]="60"
+)
 
 # Default vm configuration
 declare -A vm_config=(
@@ -23,6 +25,8 @@ declare -A vm_config=(
     [image]="image.img"
     [image_format]="raw"
     [drive_opts]=""
+    # image_opts: passed to 'qemu-img create -o' by create, e.g. nocow=on
+    [image_opts]=""
     [smp]=$(nproc)
     # display: none, sdl, gtk, curses, etc.
     [display]="none"
@@ -36,11 +40,11 @@ declare -A vm_config=(
     [daemonize]="on"
     # objects, fsdev, chardev, devices, virtfs: space-separated entries, each
     # passed as -object, -fsdev, -chardev, -device or -virtfs verbatim
-    [objects]=
-    [fsdev]=
-    [chardev]=
-    [devices]=
-    [virtfs]=
+    [objects]=""
+    [fsdev]=""
+    [chardev]=""
+    [devices]=""
+    [virtfs]=""
     [bios]="/usr/share/qemu/bios.bin"
     [nic]="user"
     # netdev: backend for a virtio-net-device in devices, e.g. user,id=net0
@@ -89,7 +93,8 @@ initialize() {
 
     if [ ! -f "$config_path" ]; then
         printf "Creating config file %s\n" "$config_path"
-        save_config config "$config_path" 
+        save_config config "$config_path" global
+        printf "\n[vm]\n" >>"$config_path"
     fi
 
     if ! command -v qemu-img &>/dev/null; then
@@ -97,10 +102,17 @@ initialize() {
     fi
 }
 
+# load_config VAR FILE [SECTION]: read the key=value lines under [SECTION],
+# or the lines before the first section header when SECTION is not given
 load_config() {
     local -n conf=$1
-    local file="$2" value
+    local file="$2" want="${3:-}" section="" value
     while read -r value || [ -n "$value" ]; do
+        if [[ $value == \[*\] ]]; then
+            section=${value:1:-1}
+            continue
+        fi
+        [ "$section" = "$want" ] || continue
         # Check if the line contains an equals sign
         if [[ $value = *?=* ]]; then
             # skip if it's a comment
@@ -113,10 +125,14 @@ load_config() {
     done <"$file"
 }
 
+# save_config VAR FILE [SECTION]: write VAR, under a [SECTION] header if given
 save_config() {
     local -n conf=$1
-    local file="$2" key
+    local file="$2" section="${3:-}" key
     printf "### Default configuration\n" >"$file"
+    if [ -n "$section" ]; then
+        printf "[%s]\n" "$section" >>"$file"
+    fi
     for key in $(printf "%s\n" "${!conf[@]}" | sort); do
         printf "%s=%s\n" "$key" "${conf[$key]}" >>"$file"
     done
@@ -163,6 +179,30 @@ load_vm_config() {
     for key in "${required_keys[@]}"; do
         [ -n "${vm_config[$key]}" ] || die "error: $key is not set in $vm_conf_path"
     done
+}
+
+# load_section VAR FILE SECTION SKIPPED: overlay the keys under [SECTION] of
+# FILE on VAR; keys VAR has no entry for are left out and added to the
+# array SKIPPED
+load_section() {
+    local -n dst=$1 skipped=$4
+    local file=$2 section=$3 key
+    local -A src=()
+    load_config src "$file" "$section"
+    for key in "${!src[@]}"; do
+        if [ -v "dst[$key]" ]; then
+            dst[$key]=${src[$key]}
+        else
+            skipped+=("$key")
+        fi
+    done
+}
+
+# overlay the [vm] section of the global config on vm_config for a new VM
+apply_global_config() {
+    local -a rejected=()
+    load_section vm_config "$config_path" vm rejected
+    [ ${#rejected[@]} = 0 ] || die "error: unknown field in [vm] of $config_path: ${rejected[*]}"
 }
 
 set_config() {
@@ -330,8 +370,14 @@ create_new_vm() {
     local img_path="$vms_path/$vm_name/${vm_config[image]}"
 
     mkdir -p "$vms_path/$vm_name"
-    # remaining arguments go to qemu-img verbatim, e.g. -f qcow2 -o nocow=on
-    qemu-img create "$@" "$img_path" "$image_size" || return 1
+    # remaining arguments go to qemu-img verbatim, e.g. -f qcow2 -o nocow=on;
+    # image_format and image_opts are passed first, so -f and -o on the
+    # command line override them 
+    local opts=()
+    if [ -n "${vm_config[image_opts]}" ]; then
+        opts=(-o "${vm_config[image_opts]}")
+    fi
+    qemu-img create -f "${vm_config[image_format]}" "${opts[@]}" "$@" "$img_path" "$image_size" || return 1
 
     # record the format qemu-img actually used, for -drive format=
     vm_config[image_format]=$(qemu-img info "$img_path" | awk -F": " '/^file format:/ {print $2}')
@@ -395,19 +441,21 @@ cmd_stop() {
     fi
     check_params $# 1
     check_vm_name "$1"
+    [ -n "$force" ] || [[ ${config[stop_timeout]} =~ ^[0-9]+$ ]] || die "error: stop_timeout must be a number of seconds"
 
     local vm_name=$1
     local vm_path="$vms_path/$vm_name"
     local sock="$vm_path/monitor.sock"
 
     vm_running "$vm_name" || die "$vm_name is not running"
-    local pid=$(cat "$vm_path/pid")
+    local pid
+    pid=$(cat "$vm_path/pid")
 
     # ask the guest to power off over the monitor, kill it when there is
     # no monitor socket or it is still up after stop_timeout seconds
     if [ -z "$force" ] && [ -S "$sock" ] && command -v socat &>/dev/null; then
         printf "system_powerdown\n" | socat - "UNIX-CONNECT:$sock" >/dev/null || true
-        wait_exit "$vm_name" "$stop_timeout" || true
+        wait_exit "$vm_name" "${config[stop_timeout]}" || true
     fi
 
     if vm_running "$vm_name"; then
@@ -450,7 +498,8 @@ cmd_boot() {
     check_vm_name "$1"
 
     local vm_name=$1
-    local iso_path=$(realpath "$2")
+    local iso_path
+    iso_path=$(realpath "$2")
     local vm_path="$vms_path/$vm_name"
     shift 2
 
@@ -462,7 +511,7 @@ cmd_boot() {
     refuse_base "$vm_name"
 
     if [ "${vm_config[display]}" = "none" ]; then
-        printf "note: display=none, attach a console with 'vms console %s' or set display=sdl for a graphical installer\n" "$vm_name" >&2
+        printf "note: display=none, attach a console with 'vms console %s'\n" "$vm_name" >&2
     fi
 
     local img_path="$vm_path/${vm_config[image]}"
@@ -488,6 +537,8 @@ cmd_create() {
     if [ -d "$vm_path" ]; then
         die "error:  VM '$vm_name'  already exists"
     fi
+
+    apply_global_config
 
     if ! create_new_vm "$@"; then
         rm -rf "$vm_path"
@@ -583,19 +634,24 @@ cmd_edit() {
 cmd_list() {
     for conf in "$vms_path"/*/config; do
         [ -f "$conf" ] || continue
-        local vm_path=$(dirname "$conf")
-        local vm_name=$(basename "$vm_path")
+        local vm_path vm_name
+        vm_path=$(dirname "$conf")
+        vm_name=$(basename "$vm_path")
         local vm_status=""
         local pid_file="$vm_path/pid"
         if vm_running "$vm_name"; then
-            local pid=$(cat "$pid_file")
+            local pid
+            pid=$(cat "$pid_file")
             local uptime=""
             if [ -f "/proc/$pid/stat" ]; then
-                local starttime=$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null)
-                local boot_time=$(awk '/btime/ {print $2}' /proc/stat 2>/dev/null)
+                # empty when the VM exits meanwhile: uptime shows unknown
+                local starttime boot_time
+                starttime=$(awk '{print $22}' "/proc/$pid/stat" 2>/dev/null) || true
+                boot_time=$(awk '/btime/ {print $2}' /proc/stat 2>/dev/null) || true
                 if [ -n "$starttime" ] && [ -n "$boot_time" ]; then
                     local start_seconds=$((boot_time + starttime / 100))
-                    local current_seconds=$(date +%s)
+                    local current_seconds
+                    current_seconds=$(date +%s)
                     local uptime_seconds=$((current_seconds - start_seconds))
 
                     local days=$((uptime_seconds/86400))
@@ -635,8 +691,9 @@ cmd_console() {
 cmd_ports() {
     for conf in "$vms_path"/*/config; do
         [ -f "$conf" ] || continue
-        local vm_path=$(dirname "$conf")
-        local vm_name=$(basename "$vm_path")
+        local vm_path vm_name
+        vm_path=$(dirname "$conf")
+        vm_name=$(basename "$vm_path")
         local -A conf_data=()
         load_config conf_data "$conf"
         printf " - %-20s %s\n" "$vm_name" "${conf_data[ports]:-(none)}"
@@ -722,10 +779,15 @@ cmd_sandbox_add() {
 
     mkdir -p "$vm_path"
 
-    # remaining arguments go to qemu-img verbatim, e.g. -o nocow=on
+    # the base's image_opts are passed before the remaining arguments,
+    # so -o on the command line overrides them 
+    local opts=()
+    if [ -n "${vm_config[image_opts]}" ]; then
+        opts=(-o "${vm_config[image_opts]}")
+    fi
     if ! qemu-img create -f qcow2 \
         -o "backing_file=../$base_name/$image,backing_fmt=${vm_config[image_format]}" \
-        "$@" "$vm_path/$image"; then
+        "${opts[@]}" "$@" "$vm_path/$image"; then
         rm -rf "$vm_path"
         die "error: failed to create sandbox image"
     fi
@@ -767,7 +829,8 @@ cmd_sandbox_list() {
         local -A c=()
         load_config c "$conf"
         [ "${c[role]}" = "sandbox" ] || continue
-        local vm_name=$(basename "$(dirname "$conf")")
+        local vm_name
+        vm_name=$(basename "$(dirname "$conf")")
         local vm_status=""
         if vm_running "$vm_name"; then
             vm_status="RUNNING"
@@ -798,7 +861,7 @@ cmd_usage() {
 	    to qemu verbatim, e.g. -snapshot to discard disk writes on exit.
 	  vms stop [-f] VM_NAME
 	    Power off a running virtual machine over its monitor socket,
-	    killing it after ${stop_timeout}s or when there is no socket.
+	    killing it after ${config[stop_timeout]}s or when there is no socket.
 	    -f kills it right away.
 	  vms status VM_NAME
 	    Print whether a VM is running; exits 1 when it is stopped.
@@ -856,7 +919,7 @@ cmd_version() {
 	===========================================
 	vms: a simple script to manage headless VMs
 	
-	                 v0.7.1
+	                 v0.8.0
 	
 	                 hozan23
 	          hozan23@karyontech.net
@@ -868,6 +931,20 @@ cmd_version() {
 # 
 # END command functions
 #
+# load [global] and warn about unknown keys and keys outside any section,
+if [ -f "$config_path" ]; then
+    unknown=() unsectioned=()
+    declare -A none=()
+    load_section config "$config_path" global unknown
+    load_section none "$config_path" "" unsectioned
+    for key in "${unknown[@]}"; do
+        printf "warning: unknown field '%s' in [global] of %s, ignored\n" "$key" "$config_path" >&2
+    done
+    for key in "${unsectioned[@]}"; do
+        printf "warning: field '%s' is outside [global] and [vm] in %s, ignored\n" "$key" "$config_path" >&2
+    done
+fi
+
 if [ -z "$1" ]; then
     cmd_usage
     exit 0

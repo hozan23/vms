@@ -1,6 +1,15 @@
 Changelog
 =========
 
+0.8.0 - 2026-11-12
+------------------
+Added:
+  - global config (~/vms/config) with a [global] section for the
+    settings of vms itself, e.g. stop_timeout, and a [vm] section for
+    the defaults of new VMs.
+  - image_opts config field: passed to 'qemu-img create -o' by create
+    and sandbox add.
+
 0.7.1 - 2026-10-23
 ------------------
 Fixed:

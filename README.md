@@ -37,6 +37,9 @@ qcow2 with nocow:
 vms create arch 50G -f qcow2 -o nocow=on
 ```
 
+To make that the default, set `image_format=qcow2` and
+`image_opts=nocow=on` in `[vm]` of the global config. 
+
 Review or tweak the VM config in `$EDITOR`, then boot from an ISO:
 
 ```sh
@@ -96,8 +99,9 @@ vms sandbox list
 
 `unlock` makes a base an ordinary VM again once it has no sandboxes.
 Do not modify a locked image by hand while sandboxes exist. A sandbox
-is a normal VM otherwise; extra `sandbox add` arguments go to qemu-img
-verbatim, e.g. `-o nocow=on`.
+is a normal VM otherwise. The sandbox disk is created with the base's
+`image_opts`, e.g. `nocow=on`; extra `sandbox add` arguments go to
+qemu-img verbatim.
 
 ## Configuration
 
@@ -121,6 +125,7 @@ drive_opts=
 fsdev=
 image=image.img
 image_format=raw
+image_opts=
 initrd=
 kernel=
 machine=
@@ -155,11 +160,34 @@ ports=10022:22
 ports=10022-10025:22-25
 ```
 
+## Global config
+
+`~/vms/config` (`vms edit`) is split into sections. `[vm]` holds the
+defaults for new VMs and `[global]` holds the settings of `vms` itself.
+The file is created on the first run with `stop_timeout` in
+`[global]` and nothing in `[vm]`. For example:
+
+```
+[global]
+stop_timeout=60
+
+[vm]
+ram=4G
+smp=4
+display=sdl
+```
+
+`vms create` copies the fields set in `[vm]` into the new VM's config,
+any field `[vm]` leaves out gets its built-in default.
+
+`stop_timeout` is how many seconds `vms stop` waits for the guest to power
+off before killing it.
+
 ## Monitor and console
 
 `monitor=socket` and `serial=socket` create `~/vms/NAME/monitor.sock` and
 `serial.sock`; `vms monitor` and `vms console` connect via socat. New
-VMs have `display=none`. Set `display=sdl` for a graphical installer.
+VMs have `display=none`, `display` goes to `-display` verbatim.
 
 `serial=socket` also writes the serial output to `~/vms/NAME/serial.log`.
 The file is truncated each time the VM starts, so it only holds the
