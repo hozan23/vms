@@ -1,6 +1,18 @@
 Changelog
 =========
 
+0.8.1 - 2026-11-12
+------------------
+Fixed:
+  - stop_timeout and ports with a leading zero are read as decimal;
+    before, 010 waited 8 seconds and 08 killed the VM at once.
+  - ports entries that are not a port or a port range are rejected
+    with an error instead of reaching QEMU.
+  - VM names may not start with '-'.
+
+Changed:
+  - vms exits with an error on bash older than 4.3.
+
 0.8.0 - 2026-11-12
 ------------------
 Added:
